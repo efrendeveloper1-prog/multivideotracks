@@ -1,0 +1,14 @@
+{
+  "node_modules\\@twick\\live-player\\dist\\index.mjs -> ./internal-KYB5ZQ5E-Be1ZlZZg.mjs": {
+    "id": "node_modules\\@twick\\live-player\\dist\\index.mjs -> ./internal-KYB5ZQ5E-Be1ZlZZg.mjs",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_twick_live-player_dist_internal-KYB5ZQ5E-Be1ZlZZg_mjs.js"
+    ]
+  },
+  "node_modules\\@twick\\timeline\\dist\\index.mjs -> ./index-CXhwwSX--SW4K-mAQ.mjs": {
+    "id": "node_modules\\@twick\\timeline\\dist\\index.mjs -> ./index-CXhwwSX--SW4K-mAQ.mjs",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_twick_timeline_dist_index-CXhwwSX--SW4K-mAQ_mjs.js"
+    ]
+  }
+}

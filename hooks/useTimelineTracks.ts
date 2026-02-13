@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useTimeline } from '@twick/timeline';
+import { useTimeline } from '@/hooks/useTimeline';
 import { getAudioDuration, getVideoDuration } from '@/utils/audio';
 
 export const useTimelineTracks = () => {

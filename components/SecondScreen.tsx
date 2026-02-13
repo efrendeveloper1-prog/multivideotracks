@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useTimeline } from '@twick/timeline';
+import { useTimeline } from '@/hooks/useTimeline';
 
 export const SecondScreen: React.FC = () => {
     const { getTracks } = useTimeline();
-    const [presentation, setPresentation] = useState<PresentationConnection | null>(null);
+    const [presentation, setPresentation] = useState<any>(null);
     const [available, setAvailable] = useState(false);
 
     useEffect(() => {
@@ -14,14 +14,26 @@ export const SecondScreen: React.FC = () => {
 
     const startPresentation = useCallback(async () => {
         const tracks = getTracks();
-        const videoTrack = tracks.find(t => t.type === 'video');
-        if (!videoTrack) {
+        // Find a track that has a video element
+        let videoSrc: string | undefined;
+
+        for (const track of tracks) {
+            const elements = track.getElements();
+            const videoElement = elements.find(e => e.getType() === 'video');
+            if (videoElement) {
+                // We need to cast to any or VideoElement to getSrc(), as TrackElement doesn't have it
+                videoSrc = (videoElement as any).getSrc();
+                break;
+            }
+        }
+
+        if (!videoSrc) {
             alert('No hay video cargado para mostrar en segunda pantalla');
             return;
         }
 
         try {
-            const presentationUrl = `/presentation?src=${encodeURIComponent(videoTrack.src)}`;
+            const presentationUrl = `/presentation?src=${encodeURIComponent(videoSrc)}`;
             const request = new (window as any).PresentationRequest(presentationUrl);
             const connection = await request.start();
             setPresentation(connection);
@@ -32,7 +44,7 @@ export const SecondScreen: React.FC = () => {
 
             connection.send(JSON.stringify({
                 type: 'play',
-                src: videoTrack.src,
+                src: videoSrc,
                 currentTime: 0,
             }));
         } catch (error) {

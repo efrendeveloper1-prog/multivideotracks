@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Hide Twick Studio UI components to leave only the canvas/player */
+.twick-studio-sidebar,
+.twick-studio-header,
+.twick-studio-timeline,
+.twick-studio-properties-panel,
+.twick-studio-left-panel,
+.twick-studio-right-panel {
+    display: none !important;
+}
+
+/* Ensure canvas is centered and visible */
+.twick-studio-canvas-container {
+    background: transparent !important;
+}
