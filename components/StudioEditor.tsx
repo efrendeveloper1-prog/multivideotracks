@@ -1,15 +1,13 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { StemUploader } from './StemUploader';
-import { VideoUploader } from './VideoUploader';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { SecondScreen } from './SecondScreen';
 import { MixerBoard } from './MixerBoard';
 import { TransportControls } from './TransportControls';
 import { SongList } from './SongList';
 import { AudioEngineProvider, useAudioEngine } from '@/hooks/useAudioEngine';
 import { WaveformDisplay } from './WaveformDisplay';
-import '@twick/studio/dist/studio.css'; // Keep css if used by other components or remove if possible
+import { VideoTimelineTrack } from './VideoTimelineTrack';
 
 const EditorContent: React.FC = () => {
     const { setVideoElement, tracks, currentTime, duration } = useAudioEngine();
@@ -31,76 +29,102 @@ const EditorContent: React.FC = () => {
         return () => window.removeEventListener('video-uploaded', handleVideo);
     }, []);
 
-    // Format helpers
+    // Create a master (mixed) AudioBuffer from all audio tracks
+    const masterBuffer = useMemo(() => {
+        const audioTracks = tracks.filter(t => t.buffer && !t.name.includes("VIDEO"));
+        if (audioTracks.length === 0) return null;
+
+        const maxLength = Math.max(...audioTracks.map(t => t.buffer!.length));
+        const sampleRate = audioTracks[0].buffer!.sampleRate;
+        const mixed = new Float32Array(maxLength);
+
+        audioTracks.forEach(track => {
+            const data = track.buffer!.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+                mixed[i] += data[i];
+            }
+        });
+
+        let peak = 0;
+        for (let i = 0; i < mixed.length; i++) {
+            const abs = Math.abs(mixed[i]);
+            if (abs > peak) peak = abs;
+        }
+        if (peak > 1) {
+            for (let i = 0; i < mixed.length; i++) {
+                mixed[i] /= peak;
+            }
+        }
+
+        const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const buf = ac.createBuffer(1, maxLength, sampleRate);
+        buf.copyToChannel(mixed, 0);
+        ac.close();
+
+        return buf;
+    }, [tracks]);
+
+    const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
+
     const fmt = (t: number) => {
         const m = Math.floor(t / 60);
         const s = Math.floor(t % 60);
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
-    // Helper for wave color
-    const getWaveColor = (name: string) => {
-        const n = name.toLowerCase();
-        if (n.includes('drum') || n.includes('bateria')) return '#06b6d4'; // cyan
-        if (n.includes('bass') || n.includes('bajo')) return '#0d9488'; // teal
-        if (n.includes('vox') || n.includes('voz')) return '#2563eb'; // blue
-        if (n.includes('click')) return '#dc2626'; // red
-        return '#94a3b8'; // slate
-    };
-
     return (
-        <div className="flex flex-col h-screen bg-black text-white overflow-hidden font-sans">
-            {/* Header / Info Bar */}
-            <div className="h-12 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-4">
-                <div className="flex items-center gap-4">
-                    <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-bold text-gray-300">LOAD SETLIST</button>
-                    <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-bold text-gray-300">MIDI</button>
+        <div className="flex flex-col h-screen h-[100dvh] bg-black text-white overflow-hidden font-sans">
+            {/* Header */}
+            <div className="h-10 sm:h-12 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-2 sm:px-4 shrink-0">
+                <div className="flex items-center gap-1 sm:gap-3">
+                    <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">SETLIST</button>
+                    <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">MIDI</button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <div className="bg-gray-800 px-4 py-1 rounded text-green-500 font-mono font-bold">
-                        {fmt(currentTime)} / {fmt(duration)}
-                    </div>
+                <div className="bg-gray-800 px-3 py-0.5 rounded text-green-500 font-mono font-bold text-xs sm:text-sm">
+                    {fmt(currentTime)} / {fmt(duration)}
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-bold text-gray-300">EDIT SONG</button>
-                    <SecondScreen />
+                <div className="flex items-center gap-1 sm:gap-3">
+                    <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300 hidden sm:block">EDIT</button>
                 </div>
             </div>
 
-            {/* Main Workspace: Tracks (Top/Center) + Video (Hidden/Bg) */}
-            <div className="flex-1 flex overflow-hidden relative">
+            {/* Main Workspace */}
+            <div className="flex-1 flex flex-col sm:flex-row overflow-hidden relative min-h-0">
 
-                {/* Video Player - Hidden or Background */}
-                {videoSrc && (
-                    <div className="absolute top-0 right-0 w-64 h-36 bg-black z-50 border border-gray-800 shadow-xl opacity-90 hover:opacity-100 transition-opacity">
-                        <video
-                            ref={videoRef}
-                            src={videoSrc}
-                            className="w-full h-full object-contain"
-                            muted // Mute video so we only hear audio engine stems (if video has audio)
-                        />
-                    </div>
-                )}
+                {/* Left: Timeline & Mixer */}
+                <div className="flex-1 bg-gray-800/50 p-1 sm:p-2 relative z-10 flex flex-col min-w-0 min-h-0">
+                    {/* Timeline Area */}
+                    <div className="bg-gray-900 mb-1 sm:mb-2 rounded border border-gray-700 overflow-hidden flex flex-col relative shrink-0">
 
-                {/* Left: Mixer Grid */}
-                <div className="flex-1 bg-gray-800/50 p-2 overflow-x-auto relative z-10 flex flex-col">
-                    {/* Timeline / Waveform Area */}
-                    <div className="h-48 bg-gray-900 mb-2 rounded border border-gray-700 overflow-hidden flex flex-col relative">
-                        {/* Draw stacked waveforms */}
-                        {tracks.length > 0 ? (
-                            tracks.map((track) => (
-                                <div key={track.id} className="flex-1 border-b border-gray-800/50 relative group bg-gray-900">
-                                    <div className="absolute left-0 top-0 text-[10px] text-gray-400 p-1 z-10 bg-black/50 pointer-events-none">{track.name}</div>
-                                    <WaveformDisplay buffer={track.buffer!} color={track.color || getWaveColor(track.name)} />
+                        {/* Video Track (Thumbnails) */}
+                        {videoTrack && (
+                            <div className="h-14 sm:h-20 border-b border-gray-700 relative flex shrink-0">
+                                <div className="w-16 sm:w-24 bg-purple-900/30 border-r border-gray-700 flex items-center justify-center p-1 text-[9px] sm:text-[10px] text-purple-300 font-bold">
+                                    VIDEO
                                 </div>
-                            ))
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center text-gray-600 text-sm">
-                                Timeline View / Waveforms
+                                <div className="flex-1 relative h-full">
+                                    <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
+                                </div>
                             </div>
                         )}
+
+                        {/* Master Waveform */}
+                        <div className="h-20 sm:h-28 relative flex shrink-0">
+                            <div className="w-16 sm:w-24 bg-gray-800 border-r border-gray-700 flex items-center justify-center p-1 text-[9px] sm:text-[10px] text-green-400 font-bold">
+                                MASTER
+                            </div>
+                            <div className="flex-1 relative h-full bg-gray-950">
+                                {masterBuffer ? (
+                                    <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px] sm:text-xs">
+                                        No audio loaded
+                                    </div>
+                                )}
+                            </div>
+                        </div>
 
                         {/* Playhead Cursor */}
                         <div
@@ -110,29 +134,43 @@ const EditorContent: React.FC = () => {
                     </div>
 
                     {/* Mixer Channels */}
-                    <div className="flex-1 overflow-hidden">
+                    <div className="flex-1 overflow-hidden border-t border-gray-700 pt-1 sm:pt-2 text-white min-h-0">
                         <MixerBoard />
                     </div>
                 </div>
 
-                {/* Right: Setlist / Sidebar */}
-                <div className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col z-20">
-                    <SongList />
+                {/* Right: Sidebar (hidden on very small, collapsible) */}
+                <div className="w-full sm:w-64 lg:w-72 bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
+                    {/* Video Player Preview */}
+                    <div className="aspect-video max-h-32 sm:max-h-none bg-black border-b border-gray-800 relative group shrink-0">
+                        {videoSrc ? (
+                            <video
+                                ref={videoRef}
+                                src={videoSrc}
+                                className="w-full h-full object-contain"
+                            />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">
+                                No Video
+                            </div>
+                        )}
+                        <div className="absolute top-1 right-1 bg-black/60 px-1 py-0.5 rounded text-[8px] text-gray-400">Preview</div>
+                    </div>
 
-                    <div className="p-2 border-t border-gray-800">
-                        <StemUploader />
-                        <div className="mt-2 text-xs text-center text-gray-500">Upload Stems ZIP</div>
+                    {/* Second Screen Button */}
+                    <div className="px-2 py-1 border-b border-gray-800 shrink-0">
+                        <SecondScreen />
+                    </div>
 
-                        <div className="mt-2 border-t border-gray-800 pt-2">
-                            <VideoUploader />
-                            <div className="mt-1 text-xs text-center text-gray-500">Sync Video</div>
-                        </div>
+                    {/* Song List (fills remaining) */}
+                    <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                        <SongList />
                     </div>
                 </div>
             </div>
 
             {/* Footer: Transport Controls */}
-            <div className="h-32 bg-gray-900 border-t border-gray-800 p-2 z-30">
+            <div className="h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
                 <TransportControls />
             </div>
         </div>

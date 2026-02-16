@@ -10,6 +10,17 @@ export interface Track {
     muted: boolean;
     soloed: boolean;
     color: string;
+    isVideoAudio?: boolean; // Flag for the extracted audio from video
+}
+
+export interface Song {
+    id: string;
+    title: string;
+    artist: string;
+    key: string;
+    bpm: number;
+    stemFiles: File[];
+    videoFile?: File;
 }
 
 interface AudioEngineContextType {
@@ -20,6 +31,7 @@ interface AudioEngineContextType {
     addTrack: (file: File, name: string) => Promise<void>;
     addVideoTrack: (file: File) => Promise<void>;
     removeTrack: (id: string) => void;
+    clearTracks: () => void;
     togglePlay: () => void;
     stop: () => void;
     seek: (time: number) => void;
@@ -29,6 +41,12 @@ interface AudioEngineContextType {
     setVideoElement: (element: HTMLVideoElement | null) => void;
     masterVolume: number;
     setMasterVolume: (val: number) => void;
+    // Playlist
+    playlist: Song[];
+    activeSongId: string | null;
+    addSongToPlaylist: (song: Song) => void;
+    removeSongFromPlaylist: (id: string) => void;
+    loadSong: (id: string) => Promise<void>;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -45,6 +63,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [masterVolume, setMasterVolume] = useState(1);
+    const [playlist, setPlaylist] = useState<Song[]>([]);
+    const [activeSongId, setActiveSongId] = useState<string | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -76,12 +96,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Color helper
     const getTrackColor = (name: string) => {
         const n = name.toLowerCase();
-        if (n.includes('drum')) return '#06b6d4'; // cyan
-        if (n.includes('bass')) return '#0d9488'; // teal
-        if (n.includes('vox') || n.includes('voz')) return '#2563eb'; // blue
-        if (n.includes('click')) return '#dc2626'; // red
-        if (n.includes('key') || n.includes('piano')) return '#d946ef'; // fuchsia
-        return '#94a3b8'; // slate
+        if (n.includes('drum') || n.includes('bateria')) return '#06b6d4';
+        if (n.includes('bass') || n.includes('bajo')) return '#0d9488';
+        if (n.includes('vox') || n.includes('voz') || n.includes('vocal')) return '#2563eb';
+        if (n.includes('click')) return '#dc2626';
+        if (n.includes('key') || n.includes('piano') || n.includes('synth')) return '#d946ef';
+        if (n.includes('guitar') || n.includes('guit')) return '#f59e0b';
+        if (n.includes('video')) return '#a855f7';
+        return '#94a3b8';
     };
 
     const addTrack = useCallback(async (file: File, name: string) => {
@@ -103,14 +125,84 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             };
 
             setTracks(prev => [...prev, newTrack]);
-
-            // Update total duration if this track is longer
             setDuration(prev => Math.max(prev, audioBuffer.duration));
         } catch (e) {
             console.error("Error decoding audio", e);
-            alert("Error al cargar audio: " + name);
         }
     }, []);
+
+    const addVideoTrack = useCallback(async (videoFile: File) => {
+        if (!audioContextRef.current) return;
+
+        const url = URL.createObjectURL(videoFile);
+
+        // 1. Create the visual VIDEO TRACK (no buffer, for timeline thumbnails)
+        const videoTrack: Track = {
+            id: crypto.randomUUID(),
+            name: "VIDEO TRACK",
+            file: videoFile,
+            buffer: undefined,
+            volume: 1,
+            muted: false,
+            soloed: false,
+            color: '#a855f7'
+        };
+
+        // 2. Try to extract audio from video and create a separate audio channel
+        let audioTrack: Track | null = null;
+        try {
+            const arrayBuffer = await videoFile.arrayBuffer();
+            const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
+
+            audioTrack = {
+                id: crypto.randomUUID(),
+                name: "VIDEO AUDIO",
+                file: videoFile,
+                buffer: audioBuffer,
+                volume: 1,
+                muted: false,
+                soloed: false,
+                color: '#c084fc',
+                isVideoAudio: true
+            };
+        } catch (e) {
+            console.warn("Video has no extractable audio or decode failed:", e);
+        }
+
+        setTracks(prev => {
+            const newTracks = [...prev, videoTrack];
+            if (audioTrack) newTracks.push(audioTrack);
+            return newTracks;
+        });
+
+        // Emit event for the UI to catch and set video src
+        const customEvent = new CustomEvent('video-uploaded', { detail: url });
+        window.dispatchEvent(customEvent);
+
+        // Get video duration
+        const tempVideo = document.createElement('video');
+        tempVideo.src = url;
+        tempVideo.onloadedmetadata = () => {
+            setDuration(prev => Math.max(prev, tempVideo.duration));
+        };
+    }, []);
+
+    const clearTracks = useCallback(() => {
+        stopAudioInternal();
+        setTracks([]);
+        setDuration(0);
+        setCurrentTime(0);
+        pauseTimeRef.current = 0;
+        setIsPlaying(false);
+    }, []);
+
+    const stopAudioInternal = () => {
+        sourceNodesRef.current.forEach(source => {
+            try { source.stop(); } catch (e) { }
+        });
+        sourceNodesRef.current.clear();
+        gainNodesRef.current.clear();
+    };
 
     const playAudio = useCallback((startOffset: number) => {
         if (!audioContextRef.current || !masterGainRef.current) return;
@@ -122,56 +214,37 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const anySolo = tracks.some(t => t.soloed);
 
         tracks.forEach(track => {
-            if (!track.buffer) return;
+            if (!track.buffer) return; // Skip VIDEO TRACK (no buffer)
 
-            // Create nodes
             const source = audioContextRef.current!.createBufferSource();
             source.buffer = track.buffer;
 
             const gainNode = audioContextRef.current!.createGain();
-
-            // Initial gain
             const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
             gainNode.gain.value = shouldLogicallyMute ? 0 : track.volume;
 
-            // Connect
             source.connect(gainNode);
             gainNode.connect(masterGainRef.current!);
-
-            // Start
-            // audioBufferSource starts at X, loops? No.
-            // start(when, offset, duration)
             source.start(0, startOffset);
 
-            // Save refs
             sourceNodesRef.current.set(track.id, source);
             gainNodesRef.current.set(track.id, gainNode);
 
-            // Cleanup on end
-            source.onended = () => {
-                // optional cleanup
-            };
+            source.onended = () => { };
         });
     }, [tracks]);
 
     const stopAudio = useCallback(() => {
-        sourceNodesRef.current.forEach(source => {
-            try { source.stop(); } catch (e) { }
-        });
-        sourceNodesRef.current.clear();
-        gainNodesRef.current.clear();
+        stopAudioInternal();
     }, []);
 
     const togglePlay = useCallback(() => {
         if (isPlaying) {
-            // Pause
-            stopAudio();
+            stopAudioInternal();
             pauseTimeRef.current = currentTime;
             if (videoRef.current) videoRef.current.pause();
             cancelAnimationFrame(animationFrameRef.current!);
         } else {
-            // Play
-            // If at end, restart?
             let start = pauseTimeRef.current;
             if (start >= duration && duration > 0) {
                 start = 0;
@@ -186,7 +259,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 videoRef.current.play().catch(e => console.error("Video play failed", e));
             }
 
-            // Loop
             const update = () => {
                 const now = audioContextRef.current!.currentTime;
                 const calculatedTime = now - startTimeRef.current;
@@ -202,10 +274,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             animationFrameRef.current = requestAnimationFrame(update);
         }
         setIsPlaying(!isPlaying);
-    }, [isPlaying, currentTime, playAudio, stopAudio, duration]);
+    }, [isPlaying, currentTime, playAudio, duration]);
 
     const stop = useCallback(() => {
-        stopAudio();
+        stopAudioInternal();
         if (videoRef.current) {
             videoRef.current.pause();
             videoRef.current.currentTime = 0;
@@ -214,11 +286,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setCurrentTime(0);
         setIsPlaying(false);
         cancelAnimationFrame(animationFrameRef.current!);
-    }, [stopAudio]);
+    }, []);
 
     const seek = useCallback((time: number) => {
         const wasPlaying = isPlaying;
-        if (wasPlaying) stopAudio();
+        if (wasPlaying) stopAudioInternal();
 
         pauseTimeRef.current = time;
         setCurrentTime(time);
@@ -231,7 +303,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             playAudio(time);
             startTimeRef.current = audioContextRef.current!.currentTime - time;
         }
-    }, [isPlaying, playAudio, stopAudio]);
+    }, [isPlaying, playAudio]);
 
     // Live Volume/Mute/Solo updates
     useEffect(() => {
@@ -242,8 +314,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const targetVolume = shouldLogicallyMute ? 0 : track.volume;
 
             if (track.name === "VIDEO TRACK" && videoRef.current) {
-                // Direct control for video element since we didn't route it
-                videoRef.current.volume = targetVolume * masterVolume; // Simple master application
+                videoRef.current.volume = targetVolume * masterVolume;
                 videoRef.current.muted = shouldLogicallyMute;
             } else {
                 const gainNode = gainNodesRef.current.get(track.id);
@@ -271,6 +342,41 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setTracks(prev => prev.filter(t => t.id !== id));
     };
 
+    // Playlist management
+    const addSongToPlaylist = useCallback((song: Song) => {
+        setPlaylist(prev => [...prev, song]);
+    }, []);
+
+    const removeSongFromPlaylist = useCallback((id: string) => {
+        setPlaylist(prev => prev.filter(s => s.id !== id));
+    }, []);
+
+    const loadSong = useCallback(async (id: string) => {
+        const song = playlist.find(s => s.id === id);
+        if (!song) return;
+
+        // Stop current playback and clear tracks
+        stopAudioInternal();
+        cancelAnimationFrame(animationFrameRef.current!);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        pauseTimeRef.current = 0;
+        setDuration(0);
+        setTracks([]);
+        setActiveSongId(id);
+
+        // Load all stem files
+        for (const stemFile of song.stemFiles) {
+            const trackName = stemFile.name.replace(/\.(wav|mp3)$/i, '');
+            await addTrack(stemFile, trackName);
+        }
+
+        // Load video if present
+        if (song.videoFile) {
+            await addVideoTrack(song.videoFile);
+        }
+    }, [playlist, addTrack, addVideoTrack]);
+
     return (
         <AudioEngineContext.Provider value={{
             tracks,
@@ -280,6 +386,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             addTrack,
             addVideoTrack,
             removeTrack,
+            clearTracks,
             togglePlay,
             stop,
             seek,
@@ -288,7 +395,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             toggleTrackSolo,
             setVideoElement: (el) => videoRef.current = el,
             masterVolume,
-            setMasterVolume
+            setMasterVolume,
+            playlist,
+            activeSongId,
+            addSongToPlaylist,
+            removeSongFromPlaylist,
+            loadSong
         }}>
             {children}
         </AudioEngineContext.Provider>

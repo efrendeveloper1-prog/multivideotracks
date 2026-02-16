@@ -20,6 +20,7 @@ const getTrackColor = (name: string) => {
     if (n.includes('key') || n.includes('piano') || n.includes('synth')) return 'bg-sky-600';
     if (n.includes('vox') || n.includes('bgv') || n.includes('choir')) return 'bg-blue-600';
     if (n.includes('click') || n.includes('cue')) return 'bg-red-600';
+    if (n.includes('video')) return 'bg-purple-600';
     return 'bg-slate-600';
 };
 

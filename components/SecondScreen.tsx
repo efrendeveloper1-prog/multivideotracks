@@ -1,10 +1,11 @@
+'use client';
+
 import React, { useCallback, useEffect, useState } from 'react';
-import { useTimeline } from '@/hooks/useTimeline';
 
 export const SecondScreen: React.FC = () => {
-    const { getTracks } = useTimeline();
     const [presentation, setPresentation] = useState<any>(null);
     const [available, setAvailable] = useState(false);
+    const isActive = !!presentation;
 
     useEffect(() => {
         if (typeof window !== 'undefined' && 'PresentationRequest' in window) {
@@ -12,20 +13,17 @@ export const SecondScreen: React.FC = () => {
         }
     }, []);
 
-    const startPresentation = useCallback(async () => {
-        const tracks = getTracks();
-        // Find a track that has a video element
-        let videoSrc: string | undefined;
-
-        for (const track of tracks) {
-            const elements = track.getElements();
-            const videoElement = elements.find(e => e.getType() === 'video');
-            if (videoElement) {
-                // We need to cast to any or VideoElement to getSrc(), as TrackElement doesn't have it
-                videoSrc = (videoElement as any).getSrc();
-                break;
-            }
+    const togglePresentation = useCallback(async () => {
+        if (isActive) {
+            // Close presentation
+            presentation?.close();
+            setPresentation(null);
+            return;
         }
+
+        // Find video source from DOM
+        const videoEl = document.querySelector('video');
+        const videoSrc = videoEl?.src;
 
         if (!videoSrc) {
             alert('No hay video cargado para mostrar en segunda pantalla');
@@ -38,8 +36,8 @@ export const SecondScreen: React.FC = () => {
             const connection = await request.start();
             setPresentation(connection);
 
-            connection.addEventListener('message', (event: MessageEvent) => {
-                console.log('Mensaje desde presentación:', event.data);
+            connection.addEventListener('close', () => {
+                setPresentation(null);
             });
 
             connection.send(JSON.stringify({
@@ -50,39 +48,52 @@ export const SecondScreen: React.FC = () => {
         } catch (error) {
             console.error('Error al iniciar presentación:', error);
         }
-    }, [getTracks]);
+    }, [isActive, presentation]);
 
-    const closePresentation = useCallback(() => {
-        presentation?.close();
-        setPresentation(null);
-    }, [presentation]);
-
-    if (!available) {
-        return (
-            <div className="p-4 bg-yellow-50 text-yellow-800 rounded">
-                Tu navegador no soporta la API de segunda pantalla. Prueba con Chrome/Edge.
-            </div>
-        );
-    }
+    if (!available) return null; // Hide entirely if not supported
 
     return (
-        <div className="p-4 border rounded-lg bg-gray-50">
-            <h3 className="font-medium mb-2">🖥️ Segunda Pantalla</h3>
-            <button
-                onClick={startPresentation}
-                disabled={!!presentation}
-                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+        <button
+            onClick={togglePresentation}
+            className={`
+                flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
+                transition-all duration-200 text-[11px] font-medium
+                ${isActive
+                    ? 'bg-green-900/40 text-green-400 border border-green-700/50 hover:bg-green-900/60'
+                    : 'bg-gray-800 text-red-400 border border-gray-700 hover:bg-gray-700'
+                }
+            `}
+            title={isActive ? 'Segunda pantalla activa - Click para desconectar' : 'Enviar a segunda pantalla'}
+        >
+            {/* Dual Monitor SVG Icon */}
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4 shrink-0"
             >
-                {presentation ? 'Presentación activa' : 'Enviar video a segunda pantalla'}
-            </button>
-            {presentation && (
-                <button
-                    onClick={closePresentation}
-                    className="ml-2 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-                >
-                    Cerrar
-                </button>
-            )}
-        </div>
+                {/* Front monitor */}
+                <rect x="1" y="4" width="13" height="10" rx="1" />
+                <line x1="5" y1="14" x2="9" y2="17" />
+                <line x1="9" y1="14" x2="5" y2="17" />
+                <line x1="4" y1="17" x2="10" y2="17" />
+                {/* Back monitor */}
+                <rect x="10" y="1" width="13" height="10" rx="1" />
+                <line x1="14" y1="11" x2="18" y2="14" />
+                <line x1="18" y1="11" x2="14" y2="14" />
+                <line x1="13" y1="14" x2="19" y2="14" />
+            </svg>
+
+            {/* Status dot */}
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+
+            <span className="truncate">
+                {isActive ? 'ON' : '2nd Screen'}
+            </span>
+        </button>
     );
 };
