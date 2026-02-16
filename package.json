@@ -16,7 +16,8 @@
     "next": "14.2.3",
     "react": "^18",
     "react-dom": "^18",
-    "waviz": "latest"
+    "waviz": "latest",
+    "web-audio-beat-detector": "^8.2.35"
   },
   "devDependencies": {
     "@types/jszip": "^3.4.1",

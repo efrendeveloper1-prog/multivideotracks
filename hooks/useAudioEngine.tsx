@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
+import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
 
 // Types
 export interface Track {
@@ -49,6 +50,8 @@ interface AudioEngineContextType {
     addSongToPlaylist: (song: Song) => void;
     removeSongFromPlaylist: (id: string) => void;
     loadSong: (id: string) => Promise<void>;
+    // Audio analysis
+    songAnalysis: AudioAnalysis | null;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -68,6 +71,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [videoDuration, setVideoDuration] = useState(0);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
+    const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -135,6 +139,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             setTracks(prev => [...prev, newTrack]);
             setDuration(prev => Math.max(prev, audioBuffer.duration));
+
+            // Run audio analysis on first audio track
+            if (!songAnalysis) {
+                analyzeAudio(audioBuffer).then(result => {
+                    setSongAnalysis(result);
+                }).catch(e => console.warn('Audio analysis failed:', e));
+            }
         } catch (e) {
             console.error("Error decoding audio", e);
         }
@@ -207,6 +218,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setDuration(0);
         setVideoDuration(0);
         setCurrentTime(0);
+        setSongAnalysis(null);
         pauseTimeRef.current = 0;
         setIsPlaying(false);
     }, []);
@@ -444,7 +456,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             removeSongFromPlaylist,
             loadSong,
             videoDuration,
-            trimVideoToAudio
+            trimVideoToAudio,
+            songAnalysis
         }}>
             {children}
         </AudioEngineContext.Provider>
