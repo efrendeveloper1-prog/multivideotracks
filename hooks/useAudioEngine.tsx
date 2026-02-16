@@ -41,6 +41,8 @@ interface AudioEngineContextType {
     setVideoElement: (element: HTMLVideoElement | null) => void;
     masterVolume: number;
     setMasterVolume: (val: number) => void;
+    videoDuration: number; // Original video duration (may be longer than audio)
+    trimVideoToAudio: () => void; // Trim video to match audio duration
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -63,6 +65,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [masterVolume, setMasterVolume] = useState(1);
+    const [videoDuration, setVideoDuration] = useState(0);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
 
@@ -74,6 +77,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const startTimeRef = useRef<number>(0);
     const pauseTimeRef = useRef<number>(0);
     const animationFrameRef = useRef<number>();
+    const durationRef = useRef<number>(0);
+    const isPlayingRef = useRef<boolean>(false);
 
     // Initialize AudioContext
     useEffect(() => {
@@ -85,6 +90,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             audioContextRef.current?.close();
         };
     }, []);
+
+    // Keep refs in sync with state
+    useEffect(() => { durationRef.current = duration; }, [duration]);
+    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -179,11 +188,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const customEvent = new CustomEvent('video-uploaded', { detail: url });
         window.dispatchEvent(customEvent);
 
-        // Get video duration
+        // Get video duration (store separately, do NOT extend master duration)
         const tempVideo = document.createElement('video');
         tempVideo.src = url;
         tempVideo.onloadedmetadata = () => {
-            setDuration(prev => Math.max(prev, tempVideo.duration));
+            setVideoDuration(tempVideo.duration);
+            // Only use video duration if there are NO audio tracks yet
+            setDuration(prev => {
+                if (prev === 0) return tempVideo.duration; // No audio, use video duration
+                return prev; // Audio exists, keep audio duration as master
+            });
         };
     }, []);
 
@@ -191,6 +205,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         stopAudioInternal();
         setTracks([]);
         setDuration(0);
+        setVideoDuration(0);
         setCurrentTime(0);
         pauseTimeRef.current = 0;
         setIsPlaying(false);
@@ -239,14 +254,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     const togglePlay = useCallback(() => {
-        if (isPlaying) {
+        if (isPlayingRef.current) {
             stopAudioInternal();
             pauseTimeRef.current = currentTime;
             if (videoRef.current) videoRef.current.pause();
             cancelAnimationFrame(animationFrameRef.current!);
+            setIsPlaying(false);
+            isPlayingRef.current = false;
         } else {
             let start = pauseTimeRef.current;
-            if (start >= duration && duration > 0) {
+            if (start >= durationRef.current && durationRef.current > 0) {
                 start = 0;
                 pauseTimeRef.current = 0;
             }
@@ -259,12 +276,28 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 videoRef.current.play().catch(e => console.error("Video play failed", e));
             }
 
-            const update = () => {
-                const now = audioContextRef.current!.currentTime;
-                const calculatedTime = now - startTimeRef.current;
+            setIsPlaying(true);
+            isPlayingRef.current = true;
 
-                if (calculatedTime >= duration && duration > 0) {
-                    stop();
+            const update = () => {
+                if (!isPlayingRef.current) return; // Guard: if stopped externally
+
+                const now = audioContextRef.current?.currentTime;
+                if (now === undefined) return;
+                const calculatedTime = now - startTimeRef.current;
+                const dur = durationRef.current;
+
+                if (calculatedTime >= dur && dur > 0) {
+                    // Song ended — stop everything
+                    stopAudioInternal();
+                    if (videoRef.current) {
+                        videoRef.current.pause();
+                        videoRef.current.currentTime = 0;
+                    }
+                    pauseTimeRef.current = 0;
+                    setCurrentTime(0);
+                    setIsPlaying(false);
+                    isPlayingRef.current = false;
                     return;
                 }
 
@@ -273,8 +306,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             };
             animationFrameRef.current = requestAnimationFrame(update);
         }
-        setIsPlaying(!isPlaying);
-    }, [isPlaying, currentTime, playAudio, duration]);
+    }, [currentTime, playAudio]);
 
     const stop = useCallback(() => {
         stopAudioInternal();
@@ -342,6 +374,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setTracks(prev => prev.filter(t => t.id !== id));
     };
 
+    // Trim video to match audio duration
+    const trimVideoToAudio = useCallback(() => {
+        // Recalculate duration based only on audio tracks
+        const audioTracks = tracks.filter(t => t.buffer && !t.name.includes("VIDEO"));
+        if (audioTracks.length > 0) {
+            const audioDur = Math.max(...audioTracks.map(t => t.buffer!.duration));
+            setDuration(audioDur);
+        }
+    }, [tracks]);
+
     // Playlist management
     const addSongToPlaylist = useCallback((song: Song) => {
         setPlaylist(prev => [...prev, song]);
@@ -400,7 +442,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             activeSongId,
             addSongToPlaylist,
             removeSongFromPlaylist,
-            loadSong
+            loadSong,
+            videoDuration,
+            trimVideoToAudio
         }}>
             {children}
         </AudioEngineContext.Provider>

@@ -10,7 +10,7 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 
 const EditorContent: React.FC = () => {
-    const { setVideoElement, tracks, currentTime, duration } = useAudioEngine();
+    const { setVideoElement, tracks, currentTime, duration, seek, videoDuration, trimVideoToAudio } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
 
@@ -95,8 +95,34 @@ const EditorContent: React.FC = () => {
 
                 {/* Left: Timeline & Mixer */}
                 <div className="flex-1 bg-gray-800/50 p-1 sm:p-2 relative z-10 flex flex-col min-w-0 min-h-0">
-                    {/* Timeline Area */}
-                    <div className="bg-gray-900 mb-1 sm:mb-2 rounded border border-gray-700 overflow-hidden flex flex-col relative shrink-0">
+                    {/* Timeline Area — click to seek */}
+                    <div
+                        className="bg-gray-900 mb-1 sm:mb-2 rounded border border-gray-700 overflow-hidden flex flex-col relative shrink-0 cursor-crosshair"
+                        onClick={(e) => {
+                            if (duration <= 0) return;
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            // Account for the label column (w-16 on mobile, w-24 on sm+)
+                            const labelWidth = window.innerWidth >= 640 ? 96 : 64;
+                            const clickX = e.clientX - rect.left - labelWidth;
+                            const trackWidth = rect.width - labelWidth;
+                            if (clickX < 0 || trackWidth <= 0) return;
+                            const ratio = Math.min(Math.max(clickX / trackWidth, 0), 1);
+                            seek(ratio * duration);
+                        }}
+                    >
+
+                        {/* Trim Video Warning */}
+                        {videoTrack && videoDuration > 0 && duration > 0 && videoDuration > duration + 0.5 && (
+                            <div className="flex items-center justify-between px-2 py-1 bg-amber-900/40 border-b border-amber-700/50 text-amber-300 text-[10px] shrink-0">
+                                <span>⚠ Video ({Math.floor(videoDuration)}s) es más largo que el audio ({Math.floor(duration)}s)</span>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); trimVideoToAudio(); }}
+                                    className="px-2 py-0.5 bg-amber-700 hover:bg-amber-600 rounded text-white text-[10px] font-bold ml-2"
+                                >
+                                    Ajustar
+                                </button>
+                            </div>
+                        )}
 
                         {/* Video Track (Thumbnails) */}
                         {videoTrack && (
