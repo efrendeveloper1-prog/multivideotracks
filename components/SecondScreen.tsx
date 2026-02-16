@@ -1,60 +1,102 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 
 export const SecondScreen: React.FC = () => {
-    const [presentation, setPresentation] = useState<any>(null);
-    const [available, setAvailable] = useState(false);
-    const isActive = !!presentation;
+    const [secondWindow, setSecondWindow] = useState<Window | null>(null);
+    const channelRef = useRef<BroadcastChannel | null>(null);
+    const isActive = !!secondWindow && !secondWindow.closed;
 
-    useEffect(() => {
-        if (typeof window !== 'undefined' && 'PresentationRequest' in window) {
-            setAvailable(true);
-        }
-    }, []);
-
-    const togglePresentation = useCallback(async () => {
-        if (isActive) {
-            // Close presentation
-            presentation?.close();
-            setPresentation(null);
+    const toggleSecondScreen = useCallback(() => {
+        // If active, close the window
+        if (secondWindow && !secondWindow.closed) {
+            secondWindow.close();
+            setSecondWindow(null);
+            channelRef.current?.close();
+            channelRef.current = null;
             return;
         }
 
-        // Find video source from DOM
-        const videoEl = document.querySelector('video');
-        const videoSrc = videoEl?.src;
-
-        if (!videoSrc) {
+        // Find the video element in the main page
+        const videoEl = document.querySelector('video') as HTMLVideoElement | null;
+        if (!videoEl || !videoEl.src) {
             alert('No hay video cargado para mostrar en segunda pantalla');
             return;
         }
 
-        try {
-            const presentationUrl = `/presentation?src=${encodeURIComponent(videoSrc)}`;
-            const request = new (window as any).PresentationRequest(presentationUrl);
-            const connection = await request.start();
-            setPresentation(connection);
+        // Open a new window (user drags it to the second monitor)
+        const win = window.open(
+            '/presentation',
+            'secondScreen',
+            'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no'
+        );
 
-            connection.addEventListener('close', () => {
-                setPresentation(null);
-            });
-
-            connection.send(JSON.stringify({
-                type: 'play',
-                src: videoSrc,
-                currentTime: 0,
-            }));
-        } catch (error) {
-            console.error('Error al iniciar presentación:', error);
+        if (!win) {
+            alert('No se pudo abrir la ventana. Permite pop-ups en tu navegador.');
+            return;
         }
-    }, [isActive, presentation]);
 
-    if (!available) return null; // Hide entirely if not supported
+        setSecondWindow(win);
+
+        // Use BroadcastChannel to communicate with the presentation window
+        const channel = new BroadcastChannel('second-screen-video');
+        channelRef.current = channel;
+
+        // Wait for the presentation page to signal it's ready, then send video src
+        channel.onmessage = (event) => {
+            if (event.data.type === 'ready') {
+                channel.postMessage({
+                    type: 'load-video',
+                    src: videoEl.src,
+                    currentTime: videoEl.currentTime
+                });
+            }
+        };
+
+        // Sync playback from main video to second screen
+        const syncInterval = setInterval(() => {
+            if (win.closed) {
+                clearInterval(syncInterval);
+                setSecondWindow(null);
+                channel.close();
+                channelRef.current = null;
+                return;
+            }
+            if (videoEl) {
+                channel.postMessage({
+                    type: 'sync',
+                    currentTime: videoEl.currentTime,
+                    playing: !videoEl.paused,
+                });
+            }
+        }, 500);
+
+        // Clean up on main window unload
+        window.addEventListener('beforeunload', () => {
+            win.close();
+            clearInterval(syncInterval);
+            channel.close();
+        }, { once: true });
+
+    }, [secondWindow]);
+
+    // Check periodically if the window is still open
+    React.useEffect(() => {
+        if (!secondWindow) return;
+        const check = setInterval(() => {
+            if (secondWindow.closed) {
+                setSecondWindow(null);
+                channelRef.current?.close();
+                channelRef.current = null;
+                clearInterval(check);
+            }
+        }, 1000);
+        return () => clearInterval(check);
+    }, [secondWindow]);
 
     return (
         <button
-            onClick={togglePresentation}
+            onClick={toggleSecondScreen}
             className={`
                 flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
                 transition-all duration-200 text-[11px] font-medium
@@ -78,13 +120,13 @@ export const SecondScreen: React.FC = () => {
             >
                 {/* Front monitor */}
                 <rect x="1" y="4" width="13" height="10" rx="1" />
-                <line x1="5" y1="14" x2="9" y2="17" />
-                <line x1="9" y1="14" x2="5" y2="17" />
+                <line x1="4" y1="14" x2="10" y2="14" />
+                <line x1="7" y1="14" x2="7" y2="17" />
                 <line x1="4" y1="17" x2="10" y2="17" />
                 {/* Back monitor */}
                 <rect x="10" y="1" width="13" height="10" rx="1" />
-                <line x1="14" y1="11" x2="18" y2="14" />
-                <line x1="18" y1="11" x2="14" y2="14" />
+                <line x1="13" y1="11" x2="19" y2="11" />
+                <line x1="16" y1="11" x2="16" y2="14" />
                 <line x1="13" y1="14" x2="19" y2="14" />
             </svg>
 
