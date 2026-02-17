@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import Waviz from 'waviz';
+import { Waviz } from 'waviz';
 
 interface AudioWaveformProps {
     audioUrl: string;
@@ -22,16 +22,26 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
 
         const handlePlay = async () => {
             await waviz.input.initializePending();
-            waviz.visualizer.simpleBars(color);
+            if (waviz.visualizer) {
+                waviz.visualizer.simpleBars(color);
+            }
         };
 
         const audio = audioRef.current;
         audio.addEventListener('play', handlePlay);
-        audio.addEventListener('pause', () => waviz.visualizer.stop());
+        audio.addEventListener('pause', () => {
+            if (waviz.visualizer) {
+                waviz.visualizer.stop();
+            }
+        });
 
         return () => {
             audio.removeEventListener('play', handlePlay);
-            audio.removeEventListener('pause', () => waviz.visualizer.stop());
+            audio.removeEventListener('pause', () => {
+                if (waviz.visualizer) {
+                    waviz.visualizer.stop();
+                }
+            });
         };
     }, [audioUrl, color]);
 
