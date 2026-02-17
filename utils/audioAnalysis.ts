@@ -93,7 +93,7 @@ async function detectKey(buffer: AudioBuffer): Promise<{ key: string; scale: str
     }
 
     // Normalize chromagram
-    const maxChroma = Math.max(...chromagram);
+    const maxChroma = chromagram.reduce((acc, v) => (v > acc ? v : acc), 0);
     if (maxChroma > 0) {
         for (let i = 0; i < 12; i++) {
             chromagram[i] /= maxChroma;
