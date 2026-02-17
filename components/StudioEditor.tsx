@@ -10,9 +10,12 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 
 const EditorContent: React.FC = () => {
-    const { setVideoElement, tracks, currentTime, duration, seek, videoDuration, trimVideoToAudio } = useAudioEngine();
+    const { setVideoElement, tracks, currentTime, duration, seek, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
+    const [isDraggingOffset, setIsDraggingOffset] = useState(false);
+    const dragStartXRef = useRef<number>(0);
+    const dragStartOffsetRef = useRef<number>(0);
 
     useEffect(() => {
         if (videoRef.current) {
@@ -101,10 +104,8 @@ const EditorContent: React.FC = () => {
                         onClick={(e) => {
                             if (duration <= 0) return;
                             const rect = e.currentTarget.getBoundingClientRect();
-                            // Account for the label column (w-16 on mobile, w-24 on sm+)
-                            const labelWidth = window.innerWidth >= 640 ? 96 : 64;
-                            const clickX = e.clientX - rect.left - labelWidth;
-                            const trackWidth = rect.width - labelWidth;
+                            const clickX = e.clientX - rect.left;
+                            const trackWidth = rect.width;
                             if (clickX < 0 || trackWidth <= 0) return;
                             const ratio = Math.min(Math.max(clickX / trackWidth, 0), 1);
                             seek(ratio * duration);
@@ -127,21 +128,52 @@ const EditorContent: React.FC = () => {
                         {/* Video Track (Thumbnails) */}
                         {videoTrack && (
                             <div className="h-14 sm:h-20 border-b border-gray-700 relative flex shrink-0">
-                                <div className="w-16 sm:w-24 bg-purple-900/30 border-r border-gray-700 flex items-center justify-center p-1 text-[9px] sm:text-[10px] text-purple-300 font-bold">
-                                    VIDEO
-                                </div>
-                                <div className="flex-1 relative h-full">
+                                <div className="flex-1 relative h-full"
+                                    onMouseDown={(e) => {
+                                        e.stopPropagation();
+                                        setIsDraggingOffset(true);
+                                        dragStartXRef.current = e.clientX;
+                                        dragStartOffsetRef.current = videoOffset;
+                                    }}
+                                    onMouseMove={(e) => {
+                                        if (!isDraggingOffset) return;
+                                        const deltaX = e.clientX - dragStartXRef.current;
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const secondsPerPixel = duration / rect.width;
+                                        setVideoOffset(dragStartOffsetRef.current + deltaX * secondsPerPixel);
+                                    }}
+                                    onMouseUp={() => setIsDraggingOffset(false)}
+                                    onMouseLeave={() => setIsDraggingOffset(false)}
+                                    style={{ cursor: isDraggingOffset ? 'grabbing' : 'grab' }}
+                                >
                                     <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
+                                    {/* Overlay label */}
+                                    <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                        VIDEO
+                                    </div>
+                                    {/* Offset badge */}
+                                    {videoOffset !== 0 && (
+                                        <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
+                                            {videoOffset > 0 ? '+' : ''}{videoOffset.toFixed(1)}s
+                                        </div>
+                                    )}
+                                    {/* Reset offset button */}
+                                    {videoOffset !== 0 && (
+                                        <button
+                                            className="absolute bottom-1 right-1 z-10 bg-gray-700/80 hover:bg-gray-600 px-1 py-0.5 rounded text-[7px] text-gray-300"
+                                            onClick={(e) => { e.stopPropagation(); setVideoOffset(0); }}
+                                            title="Reset offset"
+                                        >
+                                            ↺ Reset
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         )}
 
                         {/* Master Waveform */}
-                        <div className="h-20 sm:h-28 relative flex shrink-0">
-                            <div className="w-16 sm:w-24 bg-gray-800 border-r border-gray-700 flex items-center justify-center p-1 text-[9px] sm:text-[10px] text-green-400 font-bold">
-                                MASTER
-                            </div>
-                            <div className="flex-1 relative h-full bg-gray-950">
+                        <div className="h-20 sm:h-28 relative shrink-0">
+                            <div className="w-full relative h-full bg-gray-950">
                                 {masterBuffer ? (
                                     <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
                                 ) : (
@@ -149,6 +181,10 @@ const EditorContent: React.FC = () => {
                                         No audio loaded
                                     </div>
                                 )}
+                                {/* Overlay label */}
+                                <div className="absolute top-1 left-1 z-10 bg-gray-800/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-green-400 font-bold pointer-events-none">
+                                    MASTER
+                                </div>
                             </div>
                         </div>
 

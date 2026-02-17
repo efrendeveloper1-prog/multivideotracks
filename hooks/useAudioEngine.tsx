@@ -44,6 +44,8 @@ interface AudioEngineContextType {
     setMasterVolume: (val: number) => void;
     videoDuration: number; // Original video duration (may be longer than audio)
     trimVideoToAudio: () => void; // Trim video to match audio duration
+    videoOffset: number; // Horizontal offset in seconds for video sync
+    setVideoOffset: (offset: number) => void;
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -69,6 +71,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [duration, setDuration] = useState(0);
     const [masterVolume, setMasterVolume] = useState(1);
     const [videoDuration, setVideoDuration] = useState(0);
+    const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
@@ -83,6 +86,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const animationFrameRef = useRef<number>();
     const durationRef = useRef<number>(0);
     const isPlayingRef = useRef<boolean>(false);
+    const videoOffsetRef = useRef<number>(0);
 
     // Initialize AudioContext
     useEffect(() => {
@@ -98,6 +102,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Keep refs in sync with state
     useEffect(() => { durationRef.current = duration; }, [duration]);
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+    useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -284,7 +289,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             startTimeRef.current = audioContextRef.current!.currentTime - start;
 
             if (videoRef.current) {
-                videoRef.current.currentTime = start;
+                videoRef.current.currentTime = Math.max(0, start + videoOffsetRef.current);
                 videoRef.current.play().catch(e => console.error("Video play failed", e));
             }
 
@@ -304,7 +309,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     stopAudioInternal();
                     if (videoRef.current) {
                         videoRef.current.pause();
-                        videoRef.current.currentTime = 0;
+                        videoRef.current.currentTime = Math.max(0, videoOffsetRef.current);
                     }
                     pauseTimeRef.current = 0;
                     setCurrentTime(0);
@@ -324,7 +329,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         stopAudioInternal();
         if (videoRef.current) {
             videoRef.current.pause();
-            videoRef.current.currentTime = 0;
+            videoRef.current.currentTime = Math.max(0, videoOffsetRef.current);
         }
         pauseTimeRef.current = 0;
         setCurrentTime(0);
@@ -340,7 +345,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setCurrentTime(time);
 
         if (videoRef.current) {
-            videoRef.current.currentTime = time;
+            videoRef.current.currentTime = Math.max(0, time + videoOffsetRef.current);
         }
 
         if (wasPlaying) {
@@ -457,7 +462,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             loadSong,
             videoDuration,
             trimVideoToAudio,
-            songAnalysis
+            songAnalysis,
+            videoOffset,
+            setVideoOffset
         }}>
             {children}
         </AudioEngineContext.Provider>
