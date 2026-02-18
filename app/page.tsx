@@ -6,26 +6,16 @@ export default function HomePage() {
         <main className="flex min-h-screen flex-col items-center justify-center p-8 md:p-24 bg-zinc-950 text-white selection:bg-blue-500/30">
             <div className="z-10 w-full max-w-5xl items-center justify-center font-mono text-sm flex flex-col gap-8 text-center">
                 <div className="relative flex place-items-center mb-8">
-                    {/* Professional SVG Logo */}
                     <div className="relative w-64 h-64 md:w-80 md:h-80 flex items-center justify-center">
-                        <svg viewBox="0 0 200 200" className="w-full h-full drop-shadow-[0_0_15px_rgba(56,189,248,0.5)]">
-                            <defs>
-                                <linearGradient id="waveGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stopColor="#38bdf8" />
-                                    <stop offset="50%" stopColor="#a855f7" />
-                                    <stop offset="100%" stopColor="#10b981" />
-                                </linearGradient>
-                            </defs>
-                            {/* Waveforms */}
-                            <path d="M20,80 Q40,40 60,80 T100,80 T140,80 T180,80" fill="none" stroke="url(#waveGradient)" strokeWidth="4" className="animate-pulse opacity-40" />
-                            <path d="M20,100 Q40,60 60,100 T100,100 T140,100 T180,100" fill="none" stroke="url(#waveGradient)" strokeWidth="6" strokeLinecap="round" />
-                            <path d="M20,120 Q40,80 60,120 T100,120 T140,120 T180,120" fill="none" stroke="url(#waveGradient)" strokeWidth="4" className="animate-pulse opacity-40" />
-
-                            {/* Play Button Shape Overlay */}
-                            <path d="M70,60 L140,100 L70,140 Z" fill="rgba(0,0,0,0.3)" stroke="white" strokeWidth="2" />
-                            <path d="M85,85 L115,100 L85,115 Z" fill="white" />
-                        </svg>
-                        <div className="absolute inset-0 bg-blue-500/10 blur-[60px] rounded-full animate-pulse" />
+                        <Image
+                            src="/logo.png"
+                            alt="MultiVideoTracks Pro Logo"
+                            width={320}
+                            height={320}
+                            className="object-contain drop-shadow-[0_0_15px_rgba(56,189,248,0.3)]"
+                            priority
+                        />
+                        <div className="absolute inset-0 bg-blue-500/5 blur-[60px] rounded-full animate-pulse -z-10" />
                     </div>
                 </div>
 
@@ -42,20 +32,17 @@ export default function HomePage() {
                 <div className="mt-8 flex flex-col sm:flex-row gap-4">
                     <Link
                         href="/studio"
-                        className="group relative px-8 py-4 bg-white text-black font-bold rounded-full transition-all hover:scale-105 active:scale-95 overflow-hidden"
+                        className="group relative px-12 py-4 bg-white text-black font-bold rounded-full transition-all hover:scale-105 active:scale-95 overflow-hidden"
                     >
-                        <span className="relative z-10 text-lg">Abrir Estudio Profesional</span>
+                        <span className="relative z-10 text-xl">Abrir Estudio Profesional</span>
                         <div className="absolute inset-0 bg-gradient-to-r from-blue-100 to-white opacity-0 group-hover:opacity-100 transition-opacity" />
                     </Link>
+                </div>
 
-                    <a
-                        href="https://github.com"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-8 py-4 border border-zinc-800 hover:bg-zinc-900 text-zinc-300 font-medium rounded-full transition-all text-lg"
-                    >
-                        Ver Documentación
-                    </a>
+                <div className="mt-16 pt-8 border-t border-zinc-900/50 w-full max-w-xs">
+                    <p className="text-zinc-500 text-sm font-medium tracking-widest uppercase">
+                        Powered by <span className="text-blue-400/80">Efrendeveloper</span>
+                    </p>
                 </div>
             </div>
 
