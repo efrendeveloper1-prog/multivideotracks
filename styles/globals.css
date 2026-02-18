@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+    body {
+        @apply bg-zinc-950 text-zinc-100;
+    }
+}
+
 /* Hide Twick Studio UI components to leave only the canvas/player */
 .twick-studio-sidebar,
 .twick-studio-header,
