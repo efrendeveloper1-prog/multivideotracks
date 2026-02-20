@@ -154,7 +154,8 @@ export const SongList: React.FC = () => {
                             <div className="flex-1 min-w-0">
                                 <div className="text-white text-xs font-semibold truncate">{song.title}</div>
                                 <div className="text-gray-500 text-[10px] truncate">
-                                    {song.stemFiles.length} stems{song.videoFile ? ' + video' : ''}
+                                    {(song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO')).length : song.stemFiles.length)} stems
+                                    {(song.videoFile || (song.cachedTracks && song.cachedTracks.some(t => t.name.includes('VIDEO')))) ? ' + video' : ''}
                                 </div>
                             </div>
                             {activeSongId === song.id && (

@@ -56,6 +56,7 @@ interface AudioEngineContextType {
     addSongToPlaylist: (song: Song) => void;
     removeSongFromPlaylist: (id: string) => void;
     loadSong: (id: string) => Promise<void>;
+    updateActiveSongCache: () => void;
     // Audio analysis
     songAnalysis: AudioAnalysis | null;
 }
@@ -169,9 +170,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const addVideoTrack = useCallback(async (videoFile: File) => {
         if (!audioContextRef.current) return;
 
-        // Store videoFile in the active song
+        // Store videoFile in the active song without overwriting existing cache
         if (activeSongIdRef.current) {
-            setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, videoFile } : s));
+            setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? {
+                ...s,
+                videoFile,
+                // If it already had cached tracks, we probably want to append the new video ones mentally but we'll let loadSong handle it gracefully, or save cache on next switch
+            } : s));
         }
 
         const url = URL.createObjectURL(videoFile);
@@ -421,11 +426,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setPlaylist(prev => prev.filter(s => s.id !== id));
     }, []);
 
-    const loadSong = useCallback(async (id: string) => {
-        const song = playlist.find(s => s.id === id);
-        if (!song) return;
-
-        // Save current state to the active song before switching
+    const updateActiveSongCache = useCallback(() => {
         if (activeSongIdRef.current) {
             setPlaylist(prev => prev.map(s => {
                 if (s.id === activeSongIdRef.current) {
@@ -440,6 +441,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 return s;
             }));
         }
+    }, []);
+
+    const loadSong = useCallback(async (id: string) => {
+        const song = playlist.find(s => s.id === id);
+        if (!song) return;
+
+        // Save current state to the active song before switching
+        updateActiveSongCache();
 
         // Stop current playback and clear tracks
         stopAudioInternal();
@@ -499,6 +508,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             addSongToPlaylist,
             removeSongFromPlaylist,
             loadSong,
+            updateActiveSongCache,
             videoDuration,
             trimVideoToAudio,
             songAnalysis,
