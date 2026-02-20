@@ -23,14 +23,20 @@ const EditorContent: React.FC = () => {
         }
     }, [setVideoElement]);
 
-    // Listener for video upload
+    const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
+
+    // Connect video source instantly when video track changes
     useEffect(() => {
-        const handleVideo = (e: any) => {
-            setVideoSrc(e.detail);
-        };
-        window.addEventListener('video-uploaded', handleVideo);
-        return () => window.removeEventListener('video-uploaded', handleVideo);
-    }, []);
+        if (videoTrack && videoTrack.file) {
+            const url = URL.createObjectURL(videoTrack.file);
+            setVideoSrc(url);
+            return () => {
+                URL.revokeObjectURL(url);
+            };
+        } else {
+            setVideoSrc(null);
+        }
+    }, [videoTrack]);
 
     // Create a master (mixed) AudioBuffer from all audio tracks
     const masterBuffer = useMemo(() => {
@@ -66,8 +72,6 @@ const EditorContent: React.FC = () => {
 
         return buf;
     }, [tracks]);
-
-    const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
 
     const fmt = (t: number) => {
         const m = Math.floor(t / 60);

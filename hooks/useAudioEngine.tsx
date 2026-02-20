@@ -22,6 +22,10 @@ export interface Song {
     bpm: number;
     stemFiles: File[];
     videoFile?: File;
+    cachedTracks?: Track[];
+    cachedDuration?: number;
+    cachedVideoDuration?: number;
+    cachedVideoOffset?: number;
 }
 
 interface AudioEngineContextType {
@@ -87,6 +91,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const durationRef = useRef<number>(0);
     const isPlayingRef = useRef<boolean>(false);
     const videoOffsetRef = useRef<number>(0);
+    const tracksRef = useRef<Track[]>([]);
+    const videoDurationRef = useRef<number>(0);
+    const activeSongIdRef = useRef<string | null>(null);
 
     // Initialize AudioContext
     useEffect(() => {
@@ -103,6 +110,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { durationRef.current = duration; }, [duration]);
     useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
     useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
+    useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+    useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
+    useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -159,6 +169,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const addVideoTrack = useCallback(async (videoFile: File) => {
         if (!audioContextRef.current) return;
 
+        // Store videoFile in the active song
+        if (activeSongIdRef.current) {
+            setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, videoFile } : s));
+        }
+
         const url = URL.createObjectURL(videoFile);
 
         // 1. Create the visual VIDEO TRACK (no buffer, for timeline thumbnails)
@@ -199,10 +214,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (audioTrack) newTracks.push(audioTrack);
             return newTracks;
         });
-
-        // Emit event for the UI to catch and set video src
-        const customEvent = new CustomEvent('video-uploaded', { detail: url });
-        window.dispatchEvent(customEvent);
 
         // Get video duration (store separately, do NOT extend master duration)
         const tempVideo = document.createElement('video');
@@ -414,25 +425,53 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const song = playlist.find(s => s.id === id);
         if (!song) return;
 
+        // Save current state to the active song before switching
+        if (activeSongIdRef.current) {
+            setPlaylist(prev => prev.map(s => {
+                if (s.id === activeSongIdRef.current) {
+                    return {
+                        ...s,
+                        cachedTracks: tracksRef.current,
+                        cachedDuration: durationRef.current,
+                        cachedVideoDuration: videoDurationRef.current,
+                        cachedVideoOffset: videoOffsetRef.current
+                    };
+                }
+                return s;
+            }));
+        }
+
         // Stop current playback and clear tracks
         stopAudioInternal();
         cancelAnimationFrame(animationFrameRef.current!);
         setIsPlaying(false);
         setCurrentTime(0);
         pauseTimeRef.current = 0;
-        setDuration(0);
-        setTracks([]);
         setActiveSongId(id);
 
-        // Load all stem files
-        for (const stemFile of song.stemFiles) {
-            const trackName = stemFile.name.replace(/\.(wav|mp3)$/i, '');
-            await addTrack(stemFile, trackName);
-        }
+        if (song.cachedTracks && song.cachedTracks.length > 0) {
+            // Restore from cache
+            setTracks(song.cachedTracks);
+            setDuration(song.cachedDuration || 0);
+            setVideoDuration(song.cachedVideoDuration || 0);
+            setVideoOffset(song.cachedVideoOffset || 0);
+        } else {
+            // Fresh load
+            setDuration(0);
+            setTracks([]);
+            setVideoDuration(0);
+            setVideoOffset(0);
 
-        // Load video if present
-        if (song.videoFile) {
-            await addVideoTrack(song.videoFile);
+            // Load all stem files
+            for (const stemFile of song.stemFiles) {
+                const trackName = stemFile.name.replace(/\.(wav|mp3)$/i, '');
+                await addTrack(stemFile, trackName);
+            }
+
+            // Load video if present
+            if (song.videoFile) {
+                await addVideoTrack(song.videoFile);
+            }
         }
     }, [playlist, addTrack, addVideoTrack]);
 
