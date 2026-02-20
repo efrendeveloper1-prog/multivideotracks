@@ -1,11 +1,37 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
+    const { tracks } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const channelRef = useRef<BroadcastChannel | null>(null);
     const isActive = !!secondWindow && !secondWindow.closed;
+    const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
+
+    // Identify the active video URL from tracks
+    useEffect(() => {
+        const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
+        if (videoTrack && videoTrack.file) {
+            const url = URL.createObjectURL(videoTrack.file);
+            setCurrentVideoUrl(url);
+            return () => URL.revokeObjectURL(url);
+        } else {
+            setCurrentVideoUrl(null);
+        }
+    }, [tracks]);
+
+    // Push new video URL to the second screen if it's connected
+    useEffect(() => {
+        if (isActive && channelRef.current && currentVideoUrl) {
+            channelRef.current.postMessage({
+                type: 'load-video',
+                src: currentVideoUrl,
+                currentTime: 0 // Will auto sync via the heartbeat
+            });
+        }
+    }, [currentVideoUrl, isActive]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -17,9 +43,7 @@ export const SecondScreen: React.FC = () => {
             return;
         }
 
-        // Find the video element in the main page
-        const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-        if (!videoEl || !videoEl.src) {
+        if (!currentVideoUrl) {
             alert('No hay video cargado para mostrar en segunda pantalla');
             return;
         }
@@ -45,10 +69,11 @@ export const SecondScreen: React.FC = () => {
         // Wait for the presentation page to signal it's ready, then send video src
         channel.onmessage = (event) => {
             if (event.data.type === 'ready') {
+                const videoEl = document.querySelector('video') as HTMLVideoElement | null;
                 channel.postMessage({
                     type: 'load-video',
-                    src: videoEl.src,
-                    currentTime: videoEl.currentTime
+                    src: currentVideoUrl,
+                    currentTime: videoEl?.currentTime || 0
                 });
             }
         };
@@ -62,6 +87,7 @@ export const SecondScreen: React.FC = () => {
                 channelRef.current = null;
                 return;
             }
+            const videoEl = document.querySelector('video') as HTMLVideoElement | null;
             if (videoEl) {
                 channel.postMessage({
                     type: 'sync',
@@ -78,7 +104,7 @@ export const SecondScreen: React.FC = () => {
             channel.close();
         }, { once: true });
 
-    }, [secondWindow]);
+    }, [secondWindow, currentVideoUrl]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {
