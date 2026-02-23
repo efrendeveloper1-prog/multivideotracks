@@ -57,25 +57,31 @@ export const SecondScreen: React.FC = () => {
             }
         };
 
-        // Sync playback from main video to second screen
+        // Clean up on main window unload
+        window.addEventListener('beforeunload', () => {
+            win.close();
+            channel.close();
+        }, { once: true });
+
+    }, [secondWindow, tracks]);
+
+    // Global interval to constantly sync the CURRENT video element on the page to the second window
+    useEffect(() => {
+        if (!isActive || !channelRef.current) return;
+
         const syncInterval = setInterval(() => {
-            if (win.closed) {
-                clearInterval(syncInterval);
-                setSecondWindow(null);
-                channel.close();
-                channelRef.current = null;
-                return;
-            }
+            if (secondWindow?.closed) return;
+
             const videoEl = document.querySelector('video') as HTMLVideoElement | null;
             if (videoEl) {
-                channel.postMessage({
+                channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: videoEl.currentTime,
                     playing: !videoEl.paused,
                     src: videoEl.src
                 });
             } else {
-                channel.postMessage({
+                channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: 0,
                     playing: false,
@@ -84,14 +90,8 @@ export const SecondScreen: React.FC = () => {
             }
         }, 500);
 
-        // Clean up on main window unload
-        window.addEventListener('beforeunload', () => {
-            win.close();
-            clearInterval(syncInterval);
-            channel.close();
-        }, { once: true });
-
-    }, [secondWindow, tracks]);
+        return () => clearInterval(syncInterval);
+    }, [isActive, secondWindow]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {
