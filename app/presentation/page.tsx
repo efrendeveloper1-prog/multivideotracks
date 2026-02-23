@@ -18,9 +18,15 @@ function PresentationContent() {
             if (!video) return;
 
             if (event.data.type === 'load-video') {
-                video.src = event.data.src;
-                video.currentTime = event.data.currentTime || 0;
-                video.play().catch(() => { });
+                if (event.data.src) {
+                    video.src = event.data.src;
+                    video.load();
+                    video.currentTime = event.data.currentTime || 0;
+                    video.play().catch(e => console.warn('Presentation play error:', e));
+                } else {
+                    video.removeAttribute('src');
+                    video.load();
+                }
             }
 
             if (event.data.type === 'sync') {

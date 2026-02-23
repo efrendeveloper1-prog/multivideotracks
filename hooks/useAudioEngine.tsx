@@ -56,9 +56,12 @@ interface AudioEngineContextType {
     addSongToPlaylist: (song: Song) => void;
     removeSongFromPlaylist: (id: string) => void;
     loadSong: (id: string) => Promise<void>;
+    loadPreparedSong: (song: Song) => void;
     updateActiveSongCache: () => void;
+    prepareSongCache: (song: Song) => Promise<Song>;
     // Audio analysis
     songAnalysis: AudioAnalysis | null;
+    loadingProgress: number | null;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -80,6 +83,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
+    const [loadingProgress, setLoadingProgress] = useState<number | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -170,15 +174,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const addVideoTrack = useCallback(async (videoFile: File) => {
         if (!audioContextRef.current) return;
 
-        // Store videoFile in the active song without overwriting existing cache
-        if (activeSongIdRef.current) {
-            setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? {
-                ...s,
-                videoFile,
-                // If it already had cached tracks, we probably want to append the new video ones mentally but we'll let loadSong handle it gracefully, or save cache on next switch
-            } : s));
-        }
-
         const url = URL.createObjectURL(videoFile);
 
         // 1. Create the visual VIDEO TRACK (no buffer, for timeline thumbnails)
@@ -214,23 +209,56 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             console.warn("Video has no extractable audio or decode failed:", e);
         }
 
+        // Apply immediately to tracks state
         setTracks(prev => {
             const newTracks = [...prev, videoTrack];
             if (audioTrack) newTracks.push(audioTrack);
             return newTracks;
         });
 
-        // Get video duration (store separately, do NOT extend master duration)
+        // Get video duration
+        let newVideoDuration = 0;
         const tempVideo = document.createElement('video');
         tempVideo.src = url;
-        tempVideo.onloadedmetadata = () => {
-            setVideoDuration(tempVideo.duration);
-            // Only use video duration if there are NO audio tracks yet
-            setDuration(prev => {
-                if (prev === 0) return tempVideo.duration; // No audio, use video duration
-                return prev; // Audio exists, keep audio duration as master
-            });
-        };
+
+        // Wrap the onloadedmetadata in a promise since we need the duration to update caches
+        const durationPromise = new Promise<number>((resolve) => {
+            tempVideo.onloadedmetadata = () => {
+                newVideoDuration = tempVideo.duration;
+                setVideoDuration(tempVideo.duration);
+                // Only use video duration if there are NO audio tracks yet
+                setDuration(prev => {
+                    if (prev === 0) return tempVideo.duration; // No audio, use video duration
+                    return prev; // Audio exists, keep audio duration as master
+                });
+                resolve(newVideoDuration);
+            };
+            tempVideo.onerror = () => {
+                resolve(0);
+            }
+        });
+
+        const duration = await durationPromise;
+
+        // Store videoFile in the active song
+        if (activeSongIdRef.current) {
+            setPlaylist(prev => prev.map(s => {
+                if (s.id === activeSongIdRef.current) {
+                    const newCachedTracks = s.cachedTracks ? [...s.cachedTracks, videoTrack] : [videoTrack];
+                    if (audioTrack) {
+                        newCachedTracks.push(audioTrack);
+                    }
+
+                    return {
+                        ...s,
+                        videoFile,
+                        cachedTracks: newCachedTracks,
+                        cachedVideoDuration: duration,
+                    };
+                }
+                return s;
+            }));
+        }
     }, []);
 
     const clearTracks = useCallback(() => {
@@ -418,6 +446,95 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, [tracks]);
 
     // Playlist management
+    const prepareSongCache = useCallback(async (song: Song): Promise<Song> => {
+        if (!audioContextRef.current) return song;
+
+        const newTracks: Track[] = [];
+        let newDuration = 0;
+        let loadedItems = 0;
+        const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
+        setLoadingProgress(0);
+
+        // Decode audio stems
+        for (const file of song.stemFiles) {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+                const name = file.name.replace(/\.(wav|mp3)$/i, '');
+                newTracks.push({
+                    id: crypto.randomUUID(),
+                    name,
+                    file,
+                    buffer: audioBuffer,
+                    volume: 1,
+                    muted: false,
+                    soloed: false,
+                    color: getTrackColor(name)
+                });
+                newDuration = Math.max(newDuration, audioBuffer.duration);
+            } catch (e) {
+                console.error("Error decoding stem", e);
+            }
+            loadedItems++;
+            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
+        }
+
+        let newVideoDuration = 0;
+        if (song.videoFile) {
+            const url = URL.createObjectURL(song.videoFile);
+            const tempVideo = document.createElement('video');
+            tempVideo.src = url;
+            newVideoDuration = await new Promise<number>((resolve) => {
+                tempVideo.onloadedmetadata = () => resolve(tempVideo.duration);
+                tempVideo.onerror = () => resolve(0);
+            });
+
+            newTracks.push({
+                id: crypto.randomUUID(),
+                name: "VIDEO TRACK",
+                file: song.videoFile,
+                buffer: undefined,
+                volume: 1,
+                muted: false,
+                soloed: false,
+                color: '#a855f7'
+            });
+
+            loadedItems++;
+            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
+
+            try {
+                const arrayBuffer = await song.videoFile.arrayBuffer();
+                const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
+                newTracks.push({
+                    id: crypto.randomUUID(),
+                    name: "VIDEO AUDIO",
+                    file: song.videoFile,
+                    buffer: audioBuffer,
+                    volume: 1,
+                    muted: false,
+                    soloed: false,
+                    color: '#c084fc',
+                    isVideoAudio: true
+                });
+            } catch (e) {
+                console.warn("Video audio extraction failed", e);
+            }
+            loadedItems++;
+            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
+        }
+
+        setLoadingProgress(null);
+
+        return {
+            ...song,
+            cachedTracks: newTracks,
+            cachedDuration: newDuration || newVideoDuration,
+            cachedVideoDuration: newVideoDuration,
+            cachedVideoOffset: 0
+        };
+    }, []);
+
     const addSongToPlaylist = useCallback((song: Song) => {
         setPlaylist(prev => [...prev, song]);
     }, []);
@@ -471,18 +588,42 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoDuration(0);
             setVideoOffset(0);
 
+            let loadedItems = 0;
+            const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
+            setLoadingProgress(0);
+
             // Load all stem files
             for (const stemFile of song.stemFiles) {
                 const trackName = stemFile.name.replace(/\.(wav|mp3)$/i, '');
                 await addTrack(stemFile, trackName);
+                loadedItems++;
+                setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
             }
 
             // Load video if present
             if (song.videoFile) {
                 await addVideoTrack(song.videoFile);
+                loadedItems += 2;
+                setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
             }
+            setLoadingProgress(null);
         }
-    }, [playlist, addTrack, addVideoTrack]);
+    }, [playlist, addTrack, addVideoTrack, updateActiveSongCache]);
+
+    const loadPreparedSong = useCallback((song: Song) => {
+        updateActiveSongCache();
+        stopAudioInternal();
+        cancelAnimationFrame(animationFrameRef.current!);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        pauseTimeRef.current = 0;
+        setActiveSongId(song.id);
+
+        setTracks(song.cachedTracks || []);
+        setDuration(song.cachedDuration || 0);
+        setVideoDuration(song.cachedVideoDuration || 0);
+        setVideoOffset(song.cachedVideoOffset || 0);
+    }, [updateActiveSongCache]);
 
     return (
         <AudioEngineContext.Provider value={{
@@ -508,12 +649,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             addSongToPlaylist,
             removeSongFromPlaylist,
             loadSong,
+            loadPreparedSong,
             updateActiveSongCache,
+            prepareSongCache,
             videoDuration,
             trimVideoToAudio,
             songAnalysis,
             videoOffset,
-            setVideoOffset
+            setVideoOffset,
+            loadingProgress
         }}>
             {children}
         </AudioEngineContext.Provider>

@@ -12,10 +12,15 @@ export const SongList: React.FC = () => {
         removeSongFromPlaylist,
         loadSong,
         addTrack,
-        addVideoTrack
+        addVideoTrack,
+        prepareSongCache,
+        loadPreparedSong,
+        loadingProgress
     } = useAudioEngine();
     const zipInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
+    const [isUploading, setIsUploading] = React.useState(false);
+    const [uploadMessage, setUploadMessage] = React.useState('');
 
     // Handle adding a new multitrack from ZIP
     const handleAddMultitrack = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -23,6 +28,9 @@ export const SongList: React.FC = () => {
         if (!file) return;
 
         try {
+            setIsUploading(true);
+            setUploadMessage('Extrayendo ZIP...');
+
             const zip = new JSZip();
             const contents = await zip.loadAsync(file);
 
@@ -52,9 +60,11 @@ export const SongList: React.FC = () => {
 
             await Promise.all(promises);
 
+            setUploadMessage('Preparando tracks...');
+
             // Create song entry
             const songName = file.name.replace(/\.zip$/i, '');
-            const newSong: Song = {
+            let newSong: Song = {
                 id: crypto.randomUUID(),
                 title: songName,
                 artist: '',
@@ -64,25 +74,22 @@ export const SongList: React.FC = () => {
                 videoFile
             };
 
+            setUploadMessage('Decodificando audio (puede tardar un momento)...');
+            // Decode and prepare memory tracks so it loads instantly when clicked
+            newSong = await prepareSongCache(newSong);
+
             addSongToPlaylist(newSong);
 
             // If first song, auto-load it
             if (playlist.length === 0) {
-                // We need to load it after it's added
-                setTimeout(async () => {
-                    // Load tracks directly since loadSong depends on updated playlist
-                    for (const sf of stemFiles) {
-                        const trackName = sf.name.replace(/\.(wav|mp3)$/i, '');
-                        await addTrack(sf, trackName);
-                    }
-                    if (videoFile) {
-                        await addVideoTrack(videoFile);
-                    }
-                }, 100);
+                setUploadMessage('Cargando en reproductor...');
+                loadPreparedSong(newSong);
             }
+            setIsUploading(false);
         } catch (error) {
             console.error('Error processing ZIP:', error);
             alert('Error al leer el archivo ZIP.');
+            setIsUploading(false);
         }
 
         event.target.value = '';
@@ -92,7 +99,10 @@ export const SongList: React.FC = () => {
     const handleAddVideo = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
+        setIsUploading(true);
+        setUploadMessage('Procesando video...');
         await addVideoTrack(file);
+        setIsUploading(false);
         event.target.value = '';
     }, [addVideoTrack]);
 
@@ -128,6 +138,19 @@ export const SongList: React.FC = () => {
                 </div>
             </div>
 
+            {/* Discrete Loading Indicator */}
+            {isUploading && (
+                <div className="flex items-center justify-between px-2 py-1.5 bg-gray-800/80 border-b border-gray-700/50">
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                        <span className="text-[10px] text-gray-400 font-medium truncate">{uploadMessage}</span>
+                    </div>
+                    {loadingProgress !== null && (
+                        <span className="text-[10px] font-bold text-green-400">{loadingProgress}%</span>
+                    )}
+                </div>
+            )}
+
             {/* Song list */}
             <div className="flex-1 overflow-y-auto">
                 {playlist.length === 0 ? (
@@ -141,7 +164,12 @@ export const SongList: React.FC = () => {
                     playlist.map((song, index) => (
                         <div
                             key={song.id}
-                            onClick={() => loadSong(song.id)}
+                            onClick={async () => {
+                                setIsUploading(true);
+                                setUploadMessage('Cargando tracks...');
+                                await loadSong(song.id);
+                                setIsUploading(false);
+                            }}
                             className={`
                                 px-2 py-2 border-b border-gray-800 flex items-center cursor-pointer transition-all text-sm
                                 ${activeSongId === song.id
@@ -154,7 +182,7 @@ export const SongList: React.FC = () => {
                             <div className="flex-1 min-w-0">
                                 <div className="text-white text-xs font-semibold truncate">{song.title}</div>
                                 <div className="text-gray-500 text-[10px] truncate">
-                                    {(song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO')).length : song.stemFiles.length)} stems
+                                    {song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO') && !t.isVideoAudio).length : song.stemFiles.length} stems
                                     {(song.videoFile || (song.cachedTracks && song.cachedTracks.some(t => t.name.includes('VIDEO')))) ? ' + video' : ''}
                                 </div>
                             </div>

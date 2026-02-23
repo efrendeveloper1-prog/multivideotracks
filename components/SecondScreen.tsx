@@ -24,10 +24,10 @@ export const SecondScreen: React.FC = () => {
 
     // Push new video URL to the second screen if it's connected
     useEffect(() => {
-        if (isActive && channelRef.current && currentVideoUrl) {
+        if (isActive && channelRef.current) {
             channelRef.current.postMessage({
                 type: 'load-video',
-                src: currentVideoUrl,
+                src: currentVideoUrl || null,
                 currentTime: 0 // Will auto sync via the heartbeat
             });
         }
