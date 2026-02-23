@@ -17,19 +17,17 @@ function PresentationContent() {
             const video = videoRef.current;
             if (!video) return;
 
-            if (event.data.type === 'load-video') {
-                if (event.data.src) {
-                    video.src = event.data.src;
-                    video.load();
-                    video.currentTime = event.data.currentTime || 0;
-                    video.play().catch(e => console.warn('Presentation play error:', e));
-                } else {
-                    video.removeAttribute('src');
-                    video.load();
-                }
-            }
-
             if (event.data.type === 'sync') {
+                // If src changed, update it
+                if (event.data.src !== undefined && video.src !== event.data.src) {
+                    if (event.data.src) {
+                        video.src = event.data.src;
+                        video.load();
+                    } else {
+                        video.removeAttribute('src');
+                        video.load();
+                    }
+                }
                 // Only correct if drift > 0.5 seconds
                 const drift = Math.abs(video.currentTime - event.data.currentTime);
                 if (drift > 0.5) {

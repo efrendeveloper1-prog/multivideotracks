@@ -8,30 +8,7 @@ export const SecondScreen: React.FC = () => {
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const channelRef = useRef<BroadcastChannel | null>(null);
     const isActive = !!secondWindow && !secondWindow.closed;
-    const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
 
-    // Identify the active video URL from tracks
-    useEffect(() => {
-        const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
-        if (videoTrack && videoTrack.file) {
-            const url = URL.createObjectURL(videoTrack.file);
-            setCurrentVideoUrl(url);
-            return () => URL.revokeObjectURL(url);
-        } else {
-            setCurrentVideoUrl(null);
-        }
-    }, [tracks]);
-
-    // Push new video URL to the second screen if it's connected
-    useEffect(() => {
-        if (isActive && channelRef.current) {
-            channelRef.current.postMessage({
-                type: 'load-video',
-                src: currentVideoUrl || null,
-                currentTime: 0 // Will auto sync via the heartbeat
-            });
-        }
-    }, [currentVideoUrl, isActive]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -43,7 +20,8 @@ export const SecondScreen: React.FC = () => {
             return;
         }
 
-        if (!currentVideoUrl) {
+        const videoTrackExists = tracks.some(t => t.name === "VIDEO TRACK");
+        if (!videoTrackExists) {
             alert('No hay video cargado para mostrar en segunda pantalla');
             return;
         }
@@ -71,9 +49,10 @@ export const SecondScreen: React.FC = () => {
             if (event.data.type === 'ready') {
                 const videoEl = document.querySelector('video') as HTMLVideoElement | null;
                 channel.postMessage({
-                    type: 'load-video',
-                    src: currentVideoUrl,
-                    currentTime: videoEl?.currentTime || 0
+                    type: 'sync',
+                    src: videoEl?.src || null,
+                    currentTime: videoEl?.currentTime || 0,
+                    playing: videoEl ? !videoEl.paused : false
                 });
             }
         };
@@ -93,6 +72,14 @@ export const SecondScreen: React.FC = () => {
                     type: 'sync',
                     currentTime: videoEl.currentTime,
                     playing: !videoEl.paused,
+                    src: videoEl.src
+                });
+            } else {
+                channel.postMessage({
+                    type: 'sync',
+                    currentTime: 0,
+                    playing: false,
+                    src: null
                 });
             }
         }, 500);
@@ -104,7 +91,7 @@ export const SecondScreen: React.FC = () => {
             channel.close();
         }, { once: true });
 
-    }, [secondWindow, currentVideoUrl]);
+    }, [secondWindow, tracks]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {
