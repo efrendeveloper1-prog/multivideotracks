@@ -301,7 +301,24 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             source.connect(gainNode);
             gainNode.connect(masterGainRef.current!);
-            source.start(0, startOffset);
+            let trackWhen = 0;
+            let trackOffset = startOffset;
+
+            if (track.isVideoAudio) {
+                const offsetSum = startOffset + videoOffsetRef.current;
+                if (offsetSum >= 0) {
+                    trackOffset = offsetSum;
+                } else {
+                    trackWhen = audioContextRef.current!.currentTime + Math.abs(offsetSum);
+                    trackOffset = 0;
+                }
+            }
+
+            try {
+                source.start(trackWhen, trackOffset);
+            } catch (e) {
+                console.warn("Error starting source", e);
+            }
 
             sourceNodesRef.current.set(track.id, source);
             gainNodesRef.current.set(track.id, gainNode);
@@ -333,8 +350,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             startTimeRef.current = audioContextRef.current!.currentTime - start;
 
             if (videoRef.current) {
-                videoRef.current.currentTime = Math.max(0, start + videoOffsetRef.current);
-                videoRef.current.play().catch(e => console.error("Video play failed", e));
+                const videoStartOffset = start + videoOffsetRef.current;
+                if (videoStartOffset >= 0) {
+                    videoRef.current.currentTime = videoStartOffset;
+                    videoRef.current.play().catch(e => console.error("Video play failed", e));
+                } else {
+                    videoRef.current.currentTime = 0;
+                    // Don't play yet, wait for update loop
+                }
             }
 
             setIsPlaying(true);
@@ -347,6 +370,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 if (now === undefined) return;
                 const calculatedTime = now - startTimeRef.current;
                 const dur = durationRef.current;
+
+                if (videoRef.current && videoRef.current.paused && isPlayingRef.current) {
+                    const videoStartOffset = calculatedTime + videoOffsetRef.current;
+                    if (videoStartOffset >= 0) {
+                        videoRef.current.currentTime = videoStartOffset;
+                        videoRef.current.play().catch(e => console.error("Delayed video play failed", e));
+                    }
+                }
 
                 if (calculatedTime >= dur && dur > 0) {
                     // Song ended — stop everything
@@ -389,12 +420,21 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setCurrentTime(time);
 
         if (videoRef.current) {
-            videoRef.current.currentTime = Math.max(0, time + videoOffsetRef.current);
+            const videoStartOffset = time + videoOffsetRef.current;
+            if (videoStartOffset >= 0) {
+                videoRef.current.currentTime = videoStartOffset;
+            } else {
+                videoRef.current.currentTime = 0;
+                if (wasPlaying) videoRef.current.pause();
+            }
         }
 
         if (wasPlaying) {
             playAudio(time);
             startTimeRef.current = audioContextRef.current!.currentTime - time;
+            if (videoRef.current && (time + videoOffsetRef.current) >= 0) {
+                videoRef.current.play().catch(e => console.error("Seek play failed", e));
+            }
         }
     }, [isPlaying, playAudio]);
 

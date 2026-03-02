@@ -24,6 +24,7 @@ const EditorContent: React.FC = () => {
     }, [setVideoElement]);
 
     const videoTrack = tracks.find(t => t.name === "VIDEO TRACK");
+    const videoAudioTrack = tracks.find(t => t.isVideoAudio);
 
     // Connect video source instantly when video track changes
     useEffect(() => {
@@ -129,49 +130,72 @@ const EditorContent: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Video Track (Thumbnails) */}
+                        {/* Video Tracks Container (Thumbnails & Extracted Audio) */}
                         {videoTrack && (
-                            <div className="h-14 sm:h-20 border-b border-gray-700 relative flex shrink-0">
-                                <div className="flex-1 relative h-full"
-                                    onMouseDown={(e) => {
-                                        e.stopPropagation();
-                                        setIsDraggingOffset(true);
-                                        dragStartXRef.current = e.clientX;
-                                        dragStartOffsetRef.current = videoOffset;
+                            <div className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden"
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    setIsDraggingOffset(true);
+                                    dragStartXRef.current = e.clientX;
+                                    dragStartOffsetRef.current = videoOffset;
+                                }}
+                                onMouseMove={(e) => {
+                                    if (!isDraggingOffset) return;
+                                    const deltaX = e.clientX - dragStartXRef.current;
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const secondsPerPixel = duration / rect.width;
+                                    // Negative deltaX because positive videoOffset means video starts later in its timeline (visually shifted LEFT)
+                                    setVideoOffset(dragStartOffsetRef.current - deltaX * secondsPerPixel);
+                                }}
+                                onMouseUp={() => setIsDraggingOffset(false)}
+                                onMouseLeave={() => setIsDraggingOffset(false)}
+                                style={{ cursor: isDraggingOffset ? 'grabbing' : 'grab' }}
+                            >
+                                <div
+                                    className="flex flex-col relative w-full"
+                                    style={{
+                                        // A positive videoOffset in the engine means `video.currentTime = t + offset`
+                                        // Which means the video plays AHEAD, thereby shifting visually LEFT
+                                        transform: duration > 0 ? `translateX(${(-videoOffset / duration) * 100}%)` : 'none',
                                     }}
-                                    onMouseMove={(e) => {
-                                        if (!isDraggingOffset) return;
-                                        const deltaX = e.clientX - dragStartXRef.current;
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const secondsPerPixel = duration / rect.width;
-                                        setVideoOffset(dragStartOffsetRef.current + deltaX * secondsPerPixel);
-                                    }}
-                                    onMouseUp={() => setIsDraggingOffset(false)}
-                                    onMouseLeave={() => setIsDraggingOffset(false)}
-                                    style={{ cursor: isDraggingOffset ? 'grabbing' : 'grab' }}
                                 >
-                                    <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
-                                    {/* Overlay label */}
-                                    <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                        VIDEO
+                                    {/* Thumbnails */}
+                                    <div className="h-14 sm:h-20 relative w-full shrink-0">
+                                        <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
+                                        {/* Overlay label */}
+                                        <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                            VIDEO
+                                        </div>
                                     </div>
-                                    {/* Offset badge */}
-                                    {videoOffset !== 0 && (
-                                        <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
-                                            {videoOffset > 0 ? '+' : ''}{videoOffset.toFixed(1)}s
+
+                                    {/* Extracted Audio Waveform */}
+                                    {videoAudioTrack && videoAudioTrack.buffer && (
+                                        <div className="h-14 sm:h-20 relative w-full shrink-0 border-t border-gray-800 bg-gray-950">
+                                            <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
+                                            {/* Overlay label */}
+                                            <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                VIDEO AUDIO
+                                            </div>
                                         </div>
                                     )}
-                                    {/* Reset offset button */}
-                                    {videoOffset !== 0 && (
-                                        <button
-                                            className="absolute bottom-1 right-1 z-10 bg-gray-700/80 hover:bg-gray-600 px-1 py-0.5 rounded text-[7px] text-gray-300"
-                                            onClick={(e) => { e.stopPropagation(); setVideoOffset(0); }}
-                                            title="Reset offset"
-                                        >
-                                            ↺ Reset
-                                        </button>
-                                    )}
                                 </div>
+
+                                {/* Offset badge (fixed to top right of parent, stays visible) */}
+                                {videoOffset !== 0 && (
+                                    <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
+                                        {videoOffset > 0 ? '+' : ''}{videoOffset.toFixed(1)}s
+                                    </div>
+                                )}
+                                {/* Reset offset button */}
+                                {videoOffset !== 0 && (
+                                    <button
+                                        className="absolute bottom-1 right-1 z-10 bg-gray-700/80 hover:bg-gray-600 px-1 py-0.5 rounded text-[7px] text-gray-300"
+                                        onClick={(e) => { e.stopPropagation(); setVideoOffset(0); }}
+                                        title="Reset offset"
+                                    >
+                                        ↺ Reset
+                                    </button>
+                                )}
                             </div>
                         )}
 
