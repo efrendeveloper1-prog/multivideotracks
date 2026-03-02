@@ -10,15 +10,19 @@ export const SongList: React.FC = () => {
         activeSongId,
         addSongToPlaylist,
         removeSongFromPlaylist,
+        updateSongInPlaylist,
         loadSong,
         addTrack,
         addVideoTrack,
         prepareSongCache,
         loadPreparedSong,
-        loadingProgress
+        loadingProgress,
+        exportPreset,
+        importPreset
     } = useAudioEngine();
     const zipInputRef = useRef<HTMLInputElement>(null);
     const videoInputRef = useRef<HTMLInputElement>(null);
+    const presetInputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = React.useState(false);
     const [uploadMessage, setUploadMessage] = React.useState('');
 
@@ -62,10 +66,11 @@ export const SongList: React.FC = () => {
 
             setUploadMessage('Preparando tracks...');
 
-            // Create song entry
             const songName = file.name.replace(/\.zip$/i, '');
+            const existingSong = playlist.find(s => s.title === songName && s.isPlaceholder);
+
             let newSong: Song = {
-                id: crypto.randomUUID(),
+                id: existingSong ? existingSong.id : crypto.randomUUID(),
                 title: songName,
                 artist: '',
                 key: '',
@@ -75,13 +80,16 @@ export const SongList: React.FC = () => {
             };
 
             setUploadMessage('Decodificando audio (puede tardar un momento)...');
-            // Decode and prepare memory tracks so it loads instantly when clicked
-            newSong = await prepareSongCache(newSong);
+            newSong = await prepareSongCache(newSong, existingSong);
 
-            addSongToPlaylist(newSong);
+            if (existingSong) {
+                updateSongInPlaylist(newSong.id, newSong);
+            } else {
+                addSongToPlaylist(newSong);
+            }
 
             // If first song, auto-load it
-            if (playlist.length === 0) {
+            if (!existingSong && playlist.filter(s => !s.isPlaceholder).length === 0) {
                 setUploadMessage('Cargando en reproductor...');
                 loadPreparedSong(newSong);
             }
@@ -93,7 +101,18 @@ export const SongList: React.FC = () => {
         }
 
         event.target.value = '';
-    }, [addSongToPlaylist, playlist.length, addTrack, addVideoTrack]);
+    }, [addSongToPlaylist, updateSongInPlaylist, playlist, addTrack, addVideoTrack, prepareSongCache, loadPreparedSong]);
+
+    // Handle importing preset
+    const handleImportPreset = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        setIsUploading(true);
+        setUploadMessage('Cargando preset...');
+        await importPreset(file);
+        setIsUploading(false);
+        event.target.value = '';
+    }, [importPreset]);
 
     // Handle adding video separately
     const handleAddVideo = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,6 +131,32 @@ export const SongList: React.FC = () => {
             <div className="flex items-center justify-between px-2 py-1.5 bg-gray-800 border-b border-gray-700">
                 <span className="text-[11px] font-bold text-green-400 uppercase tracking-wider">Playlist</span>
                 <div className="flex items-center gap-1">
+                    {/* Cargar Preset */}
+                    <button
+                        onClick={() => presetInputRef.current?.click()}
+                        className="p-1 rounded bg-gray-700 hover:bg-gray-600 text-blue-400 transition-colors"
+                        title="Cargar Preset (.json)"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                    <input ref={presetInputRef} type="file" accept=".json" onChange={handleImportPreset} className="hidden" />
+
+                    {/* Guardar Preset */}
+                    <button
+                        onClick={exportPreset}
+                        className="p-1 rounded bg-gray-700 hover:bg-gray-600 text-blue-400 transition-colors"
+                        title="Guardar Preset (.json)"
+                        disabled={playlist.length === 0}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+
+                    <div className="w-[1px] h-4 bg-gray-600 mx-1"></div>
+
                     {/* Add Multitrack ZIP */}
                     <button
                         onClick={() => zipInputRef.current?.click()}
@@ -165,6 +210,10 @@ export const SongList: React.FC = () => {
                         <div
                             key={song.id}
                             onClick={async () => {
+                                if (song.isPlaceholder) {
+                                    alert(`Sube el archivo ZIP de "${song.title}" (mismo nombre) para cargarlo.`);
+                                    return;
+                                }
                                 setIsUploading(true);
                                 setUploadMessage('Cargando tracks...');
                                 await loadSong(song.id);
@@ -172,6 +221,7 @@ export const SongList: React.FC = () => {
                             }}
                             className={`
                                 px-2 py-2 border-b border-gray-800 flex items-center cursor-pointer transition-all text-sm
+                                ${song.isPlaceholder ? 'opacity-60 border-l-2 border-l-orange-500/50' : ''}
                                 ${activeSongId === song.id
                                     ? 'bg-green-900/30 border-l-2 border-l-green-500'
                                     : 'hover:bg-gray-800/80 border-l-2 border-l-transparent'
@@ -182,11 +232,17 @@ export const SongList: React.FC = () => {
                             <div className="flex-1 min-w-0">
                                 <div className="text-white text-xs font-semibold truncate">{song.title}</div>
                                 <div className="text-gray-500 text-[10px] truncate">
-                                    {song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO') && !t.isVideoAudio).length : song.stemFiles.length} stems
-                                    {(song.videoFile || (song.cachedTracks && song.cachedTracks.some(t => t.name.includes('VIDEO')))) ? ' + video' : ''}
+                                    {song.isPlaceholder ? (
+                                        <span className="text-orange-400">⚠️ Falta archivo ZIP</span>
+                                    ) : (
+                                        <>
+                                            {song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO') && !t.isVideoAudio).length : song.stemFiles.length} stems
+                                            {(song.videoFile || (song.cachedTracks && song.cachedTracks.some(t => t.name.includes('VIDEO')))) ? ' + video' : ''}
+                                        </>
+                                    )}
                                 </div>
                             </div>
-                            {activeSongId === song.id && (
+                            {activeSongId === song.id && !song.isPlaceholder && (
                                 <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse ml-1 shrink-0" />
                             )}
                             <button

@@ -5,7 +5,7 @@ import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
 export interface Track {
     id: string;
     name: string;
-    file: File;
+    file: File | null;
     buffer?: AudioBuffer;
     volume: number;
     muted: boolean;
@@ -21,11 +21,12 @@ export interface Song {
     key: string;
     bpm: number;
     stemFiles: File[];
-    videoFile?: File;
+    videoFile?: File | null;
     cachedTracks?: Track[];
     cachedDuration?: number;
     cachedVideoDuration?: number;
     cachedVideoOffset?: number;
+    isPlaceholder?: boolean;
 }
 
 interface AudioEngineContextType {
@@ -55,10 +56,14 @@ interface AudioEngineContextType {
     activeSongId: string | null;
     addSongToPlaylist: (song: Song) => void;
     removeSongFromPlaylist: (id: string) => void;
+    updateSongInPlaylist: (id: string, song: Song) => void;
     loadSong: (id: string) => Promise<void>;
     loadPreparedSong: (song: Song) => void;
     updateActiveSongCache: () => void;
-    prepareSongCache: (song: Song) => Promise<Song>;
+    prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>;
+    // Preset
+    exportPreset: () => void;
+    importPreset: (file: File) => Promise<void>;
     // Audio analysis
     songAnalysis: AudioAnalysis | null;
     loadingProgress: number | null;
@@ -176,15 +181,23 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         const url = URL.createObjectURL(videoFile);
 
+        let oldVidTrack: Track | undefined;
+        let oldVidAudioTrack: Track | undefined;
+
+        // Find existing video tracks in current state to inherit settings
+        const currentTracks = tracksRef.current;
+        oldVidTrack = currentTracks.find(t => t.name === "VIDEO TRACK");
+        oldVidAudioTrack = currentTracks.find(t => t.isVideoAudio);
+
         // 1. Create the visual VIDEO TRACK (no buffer, for timeline thumbnails)
         const videoTrack: Track = {
-            id: crypto.randomUUID(),
+            id: oldVidTrack ? oldVidTrack.id : crypto.randomUUID(),
             name: "VIDEO TRACK",
             file: videoFile,
             buffer: undefined,
-            volume: 1,
-            muted: false,
-            soloed: false,
+            volume: oldVidTrack ? oldVidTrack.volume : 1,
+            muted: oldVidTrack ? oldVidTrack.muted : false,
+            soloed: oldVidTrack ? oldVidTrack.soloed : false,
             color: '#a855f7'
         };
 
@@ -195,13 +208,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
 
             audioTrack = {
-                id: crypto.randomUUID(),
+                id: oldVidAudioTrack ? oldVidAudioTrack.id : crypto.randomUUID(),
                 name: "VIDEO AUDIO",
                 file: videoFile,
                 buffer: audioBuffer,
-                volume: 1,
-                muted: false,
-                soloed: false,
+                volume: oldVidAudioTrack ? oldVidAudioTrack.volume : 1,
+                muted: oldVidAudioTrack ? oldVidAudioTrack.muted : false,
+                soloed: oldVidAudioTrack ? oldVidAudioTrack.soloed : false,
                 color: '#c084fc',
                 isVideoAudio: true
             };
@@ -211,7 +224,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         // Apply immediately to tracks state
         setTracks(prev => {
-            const newTracks = [...prev, videoTrack];
+            const filtered = prev.filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
+            const newTracks = [...filtered, videoTrack];
             if (audioTrack) newTracks.push(audioTrack);
             return newTracks;
         });
@@ -244,7 +258,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (activeSongIdRef.current) {
             setPlaylist(prev => prev.map(s => {
                 if (s.id === activeSongIdRef.current) {
-                    const newCachedTracks = s.cachedTracks ? [...s.cachedTracks, videoTrack] : [videoTrack];
+                    const filteredCached = (s.cachedTracks || []).filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
+                    const newCachedTracks = [...filteredCached, videoTrack];
                     if (audioTrack) {
                         newCachedTracks.push(audioTrack);
                     }
@@ -486,7 +501,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, [tracks]);
 
     // Playlist management
-    const prepareSongCache = useCallback(async (song: Song): Promise<Song> => {
+    const prepareSongCache = useCallback(async (song: Song, placeholderSettings?: Song): Promise<Song> => {
         if (!audioContextRef.current) return song;
 
         const newTracks: Track[] = [];
@@ -501,14 +516,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const arrayBuffer = await file.arrayBuffer();
                 const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
                 const name = file.name.replace(/\.(wav|mp3)$/i, '');
+                const oldT = placeholderSettings?.cachedTracks?.find(t => t.name === name);
+
                 newTracks.push({
                     id: crypto.randomUUID(),
                     name,
                     file,
                     buffer: audioBuffer,
-                    volume: 1,
-                    muted: false,
-                    soloed: false,
+                    volume: oldT ? oldT.volume : 1,
+                    muted: oldT ? oldT.muted : false,
+                    soloed: oldT ? oldT.soloed : false,
                     color: getTrackColor(name)
                 });
                 newDuration = Math.max(newDuration, audioBuffer.duration);
@@ -529,14 +546,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 tempVideo.onerror = () => resolve(0);
             });
 
+            const oldVid = placeholderSettings?.cachedTracks?.find(t => t.name === "VIDEO TRACK");
             newTracks.push({
                 id: crypto.randomUUID(),
                 name: "VIDEO TRACK",
                 file: song.videoFile,
                 buffer: undefined,
-                volume: 1,
-                muted: false,
-                soloed: false,
+                volume: oldVid ? oldVid.volume : 1,
+                muted: oldVid ? oldVid.muted : false,
+                soloed: oldVid ? oldVid.soloed : false,
                 color: '#a855f7'
             });
 
@@ -546,14 +564,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             try {
                 const arrayBuffer = await song.videoFile.arrayBuffer();
                 const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
+
+                const oldAudio = placeholderSettings?.cachedTracks?.find(t => t.isVideoAudio);
                 newTracks.push({
                     id: crypto.randomUUID(),
                     name: "VIDEO AUDIO",
                     file: song.videoFile,
                     buffer: audioBuffer,
-                    volume: 1,
-                    muted: false,
-                    soloed: false,
+                    volume: oldAudio ? oldAudio.volume : 1,
+                    muted: oldAudio ? oldAudio.muted : false,
+                    soloed: oldAudio ? oldAudio.soloed : false,
                     color: '#c084fc',
                     isVideoAudio: true
                 });
@@ -562,6 +582,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
             loadedItems++;
             setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
+        } else if (placeholderSettings?.cachedTracks) {
+            // Restore placeholder video tracks if zip did not contain video
+            const oldVid = placeholderSettings.cachedTracks.find(t => t.name === "VIDEO TRACK");
+            if (oldVid) newTracks.push(oldVid);
+
+            const oldAudio = placeholderSettings.cachedTracks.find(t => t.isVideoAudio);
+            if (oldAudio) newTracks.push(oldAudio);
         }
 
         setLoadingProgress(null);
@@ -569,9 +596,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         return {
             ...song,
             cachedTracks: newTracks,
-            cachedDuration: newDuration || newVideoDuration,
-            cachedVideoDuration: newVideoDuration,
-            cachedVideoOffset: 0
+            cachedDuration: placeholderSettings?.cachedDuration || newDuration || newVideoDuration,
+            cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
+            cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
+            isPlaceholder: false
         };
     }, []);
 
@@ -581,6 +609,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const removeSongFromPlaylist = useCallback((id: string) => {
         setPlaylist(prev => prev.filter(s => s.id !== id));
+    }, []);
+
+    const updateSongInPlaylist = useCallback((id: string, song: Song) => {
+        setPlaylist(prev => prev.map(s => s.id === id ? song : s));
     }, []);
 
     const updateActiveSongCache = useCallback(() => {
@@ -665,6 +697,103 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setVideoOffset(song.cachedVideoOffset || 0);
     }, [updateActiveSongCache]);
 
+    const exportPreset = useCallback(() => {
+        // Prepare current state
+        const currentPlaylist = playlist.map(s => {
+            if (s.id === activeSongIdRef.current) {
+                return {
+                    ...s,
+                    cachedTracks: tracksRef.current,
+                    cachedDuration: durationRef.current,
+                    cachedVideoDuration: videoDurationRef.current,
+                    cachedVideoOffset: videoOffsetRef.current
+                };
+            }
+            return s;
+        });
+
+        const presetData = {
+            version: 1,
+            playlist: currentPlaylist.map(song => ({
+                id: song.id,
+                title: song.title,
+                artist: song.artist,
+                key: song.key,
+                bpm: song.bpm,
+                cachedDuration: song.cachedDuration,
+                cachedVideoDuration: song.cachedVideoDuration,
+                cachedVideoOffset: song.cachedVideoOffset,
+                tracks: (song.cachedTracks || []).map(t => ({
+                    name: t.name,
+                    volume: t.volume,
+                    muted: t.muted,
+                    soloed: t.soloed,
+                    color: t.color,
+                    isVideoAudio: t.isVideoAudio
+                }))
+            }))
+        };
+
+        const blob = new Blob([JSON.stringify(presetData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'multivideotrack-preset.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    }, [playlist]);
+
+    const importPreset = useCallback(async (file: File) => {
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            if (data.version !== 1 || !data.playlist) {
+                alert('Archivo de preset inválido.');
+                return;
+            }
+
+            const newPlaylist: Song[] = data.playlist.map((pSong: any) => ({
+                id: pSong.id || crypto.randomUUID(),
+                title: pSong.title,
+                artist: pSong.artist || '',
+                key: pSong.key || '',
+                bpm: pSong.bpm || 0,
+                stemFiles: [],
+                videoFile: null,
+                cachedDuration: pSong.cachedDuration,
+                cachedVideoDuration: pSong.cachedVideoDuration,
+                cachedVideoOffset: pSong.cachedVideoOffset,
+                isPlaceholder: true,
+                cachedTracks: pSong.tracks.map((t: any) => ({
+                    id: crypto.randomUUID(),
+                    name: t.name,
+                    file: null,
+                    volume: t.volume,
+                    muted: t.muted,
+                    soloed: t.soloed,
+                    color: t.color,
+                    isVideoAudio: t.isVideoAudio
+                }))
+            }));
+
+            stopAudioInternal();
+            setTracks([]);
+            setDuration(0);
+            setVideoDuration(0);
+            setVideoOffset(0);
+            setCurrentTime(0);
+            pauseTimeRef.current = 0;
+            setIsPlaying(false);
+            cancelAnimationFrame(animationFrameRef.current!);
+            setActiveSongId(null);
+
+            setPlaylist(newPlaylist);
+        } catch (error) {
+            console.error('Error importing preset', error);
+            alert('Error al leer el archivo de preset.');
+        }
+    }, [stopAudioInternal]);
+
     return (
         <AudioEngineContext.Provider value={{
             tracks,
@@ -688,10 +817,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             activeSongId,
             addSongToPlaylist,
             removeSongFromPlaylist,
+            updateSongInPlaylist,
             loadSong,
             loadPreparedSong,
             updateActiveSongCache,
             prepareSongCache,
+            exportPreset,
+            importPreset,
             videoDuration,
             trimVideoToAudio,
             songAnalysis,
