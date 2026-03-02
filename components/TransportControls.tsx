@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const TransportControls: React.FC = () => {
@@ -10,8 +10,42 @@ export const TransportControls: React.FC = () => {
         duration,
         masterVolume,
         setMasterVolume,
-        songAnalysis
+        songAnalysis,
+        playlist,
+        activeSongId,
+        loadSong
     } = useAudioEngine();
+
+    // Setup Spacebar keyboard shortcut for Play/Pause
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore if typing in an input
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+            if (e.code === 'Space') {
+                e.preventDefault();
+                togglePlay();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [togglePlay]);
+
+    // Playlist Navigation Logic
+    const currentIndex = playlist.findIndex(s => s.id === activeSongId);
+
+    const handlePrev = () => {
+        if (currentIndex > 0) {
+            loadSong(playlist[currentIndex - 1].id);
+        }
+    };
+
+    const handleNext = () => {
+        if (currentIndex !== -1 && currentIndex < playlist.length - 1) {
+            loadSong(playlist[currentIndex + 1].id);
+        }
+    };
 
     // Formatting helper
     const fmt = (t: number) => {
@@ -41,9 +75,24 @@ export const TransportControls: React.FC = () => {
 
             {/* Transport Buttons */}
             <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                {/* Previous Button */}
+                <button
+                    onClick={handlePrev}
+                    disabled={currentIndex <= 0}
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors
+                        ${currentIndex > 0 ? 'bg-gray-700 hover:bg-gray-600 active:bg-gray-800' : 'bg-gray-800 opacity-50 cursor-not-allowed'}`}
+                    title="Canción Anterior"
+                >
+                    <div className="flex -space-x-1 sm:-space-x-1">
+                        <div className="w-0 h-0 border-t-[8px] sm:border-t-[10px] border-t-transparent border-r-[12px] sm:border-r-[16px] border-r-white border-b-[8px] sm:border-b-[10px] border-b-transparent"></div>
+                        <div className="w-0 h-0 border-t-[8px] sm:border-t-[10px] border-t-transparent border-r-[12px] sm:border-r-[16px] border-r-white border-b-[8px] sm:border-b-[10px] border-b-transparent"></div>
+                    </div>
+                </button>
+
                 <button
                     onClick={stop}
                     className="w-10 h-10 sm:w-14 sm:h-14 bg-gray-700 rounded-lg flex items-center justify-center hover:bg-gray-600 active:bg-gray-800 shadow-lg"
+                    title="Stop"
                 >
                     <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white rounded-sm"></div>
                 </button>
@@ -51,6 +100,7 @@ export const TransportControls: React.FC = () => {
                 <button
                     onClick={togglePlay}
                     className="w-14 h-14 sm:w-16 sm:h-16 bg-gray-700 rounded-lg flex items-center justify-center hover:bg-gray-600 active:bg-gray-800 shadow-lg"
+                    title="Play/Pause (Espacio)"
                 >
                     {isPlaying ? (
                         <div className="flex gap-1.5">
@@ -60,6 +110,20 @@ export const TransportControls: React.FC = () => {
                     ) : (
                         <div className="w-0 h-0 border-t-[10px] border-t-transparent border-l-[20px] border-l-white border-b-[10px] border-b-transparent ml-1 sm:border-t-[12px] sm:border-l-[24px] sm:border-b-[12px]"></div>
                     )}
+                </button>
+
+                {/* Next Button */}
+                <button
+                    onClick={handleNext}
+                    disabled={currentIndex === -1 || currentIndex >= playlist.length - 1}
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors
+                        ${(currentIndex !== -1 && currentIndex < playlist.length - 1) ? 'bg-gray-700 hover:bg-gray-600 active:bg-gray-800' : 'bg-gray-800 opacity-50 cursor-not-allowed'}`}
+                    title="Canción Siguiente"
+                >
+                    <div className="flex -space-x-1 sm:-space-x-1">
+                        <div className="w-0 h-0 border-t-[8px] sm:border-t-[10px] border-t-transparent border-l-[12px] sm:border-l-[16px] border-l-white border-b-[8px] sm:border-b-[10px] border-b-transparent"></div>
+                        <div className="w-0 h-0 border-t-[8px] sm:border-t-[10px] border-t-transparent border-l-[12px] sm:border-l-[16px] border-l-white border-b-[8px] sm:border-b-[10px] border-b-transparent"></div>
+                    </div>
                 </button>
             </div>
 
