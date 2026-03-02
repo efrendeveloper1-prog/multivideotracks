@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 
 interface VideoTimelineTrackProps {
-    videoFile: File;
+    videoFile: File | null;
     duration: number;
     height?: number;
 }
