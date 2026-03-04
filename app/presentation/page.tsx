@@ -64,10 +64,7 @@ function PresentationContent() {
                 playsInline
                 muted
             />
-            {/* Instruction overlay - fades out */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/40 text-xs animate-pulse pointer-events-none">
-                Doble click para pantalla completa
-            </div>
+
         </div>
     );
 }
