@@ -544,11 +544,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const name = file.name.replace(/\.(wav|mp3)$/i, '');
                 const oldT = placeholderSettings?.cachedTracks?.find(t => t.name === name);
 
-                if (!newAnalysis) {
+                if (!newAnalysis || newAnalysis.bpm === 0) {
                     try {
-                        newAnalysis = await analyzeAudio(audioBuffer);
+                        const analysis = await analyzeAudio(audioBuffer);
+                        if (!newAnalysis) {
+                            newAnalysis = analysis;
+                        } else if (analysis.bpm > 0) {
+                            newAnalysis.bpm = analysis.bpm;
+                        }
                     } catch (e) {
-                        console.warn('Analysis failed', e);
+                        console.warn('Analysis failed for track:', name, e);
                     }
                 }
 

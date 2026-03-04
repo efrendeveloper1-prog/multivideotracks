@@ -24,14 +24,18 @@ export interface AudioAnalysis {
  */
 async function detectBPM(buffer: AudioBuffer): Promise<number> {
     try {
+        console.log(`Analyzing BPM on buffer: duration ${buffer.duration}s`);
         const result = await guess(buffer);
+        console.log(`BPM guess result:`, result);
         return Math.round(result.bpm);
     } catch (e) {
         console.warn('BPM detection failed, trying fallback:', e);
         try {
             const result = await guess(buffer, 0, Math.min(buffer.duration, 15));
+            console.log(`Fallback BPM guess result:`, result);
             return Math.round(result.bpm);
-        } catch {
+        } catch (err) {
+            console.error('Fallback BPM detection completely failed:', err);
             return 0;
         }
     }
