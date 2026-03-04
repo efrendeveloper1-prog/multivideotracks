@@ -28,6 +28,7 @@ export interface Song {
     cachedVideoDuration?: number;
     cachedVideoOffset?: number;
     isPlaceholder?: boolean;
+    analysis?: AudioAnalysis | null;
 }
 
 interface AudioEngineContextType {
@@ -107,6 +108,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const tracksRef = useRef<Track[]>([]);
     const videoDurationRef = useRef<number>(0);
     const activeSongIdRef = useRef<string | null>(null);
+    const songAnalysisRef = useRef<AudioAnalysis | null>(null);
 
     // Initialize AudioContext
     useEffect(() => {
@@ -126,6 +128,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { tracksRef.current = tracks; }, [tracks]);
     useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
     useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
+    useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -531,6 +534,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
         setLoadingProgress(0);
 
+        let newAnalysis = placeholderSettings?.analysis || song.analysis || null;
+
         // Decode audio stems
         for (const file of song.stemFiles) {
             try {
@@ -538,6 +543,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
                 const name = file.name.replace(/\.(wav|mp3)$/i, '');
                 const oldT = placeholderSettings?.cachedTracks?.find(t => t.name === name);
+
+                if (!newAnalysis) {
+                    try {
+                        newAnalysis = await analyzeAudio(audioBuffer);
+                    } catch (e) {
+                        console.warn('Analysis failed', e);
+                    }
+                }
 
                 newTracks.push({
                     id: crypto.randomUUID(),
@@ -623,7 +636,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             cachedDuration: placeholderSettings?.cachedDuration || newDuration || newVideoDuration,
             cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
             cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
-            isPlaceholder: false
+            isPlaceholder: false,
+            analysis: newAnalysis
         };
     }, []);
 
@@ -648,7 +662,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedTracks: tracksRef.current,
                         cachedDuration: durationRef.current,
                         cachedVideoDuration: videoDurationRef.current,
-                        cachedVideoOffset: videoOffsetRef.current
+                        cachedVideoOffset: videoOffsetRef.current,
+                        analysis: songAnalysisRef.current
                     };
                 }
                 return s;
@@ -677,12 +692,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setDuration(song.cachedDuration || 0);
             setVideoDuration(song.cachedVideoDuration || 0);
             setVideoOffset(song.cachedVideoOffset || 0);
+            setSongAnalysis(song.analysis || null);
         } else {
             // Fresh load
             setDuration(0);
             setTracks([]);
             setVideoDuration(0);
             setVideoOffset(0);
+            setSongAnalysis(null);
 
             let loadedItems = 0;
             const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
@@ -719,6 +736,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setDuration(song.cachedDuration || 0);
         setVideoDuration(song.cachedVideoDuration || 0);
         setVideoOffset(song.cachedVideoOffset || 0);
+        setSongAnalysis(song.analysis || null);
     }, [updateActiveSongCache]);
 
     const exportPreset = useCallback(() => {
@@ -730,7 +748,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     cachedTracks: tracksRef.current,
                     cachedDuration: durationRef.current,
                     cachedVideoDuration: videoDurationRef.current,
-                    cachedVideoOffset: videoOffsetRef.current
+                    cachedVideoOffset: videoOffsetRef.current,
+                    analysis: songAnalysisRef.current
                 };
             }
             return s;
@@ -744,6 +763,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 artist: song.artist,
                 key: song.key,
                 bpm: song.bpm,
+                analysis: song.analysis || null,
                 cachedDuration: song.cachedDuration,
                 cachedVideoDuration: song.cachedVideoDuration,
                 cachedVideoOffset: song.cachedVideoOffset,
@@ -783,6 +803,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 artist: pSong.artist || '',
                 key: pSong.key || '',
                 bpm: pSong.bpm || 0,
+                analysis: pSong.analysis || null,
                 stemFiles: [],
                 videoFile: null,
                 cachedDuration: pSong.cachedDuration,
