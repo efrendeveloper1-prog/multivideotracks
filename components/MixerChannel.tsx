@@ -4,9 +4,11 @@ interface MixerChannelProps {
     trackId: string;
     name: string;
     volume: number;
+    pan: number;
     isMuted: boolean;
     isSoloed: boolean;
     onVolumeChange: (id: string, volume: number) => void;
+    onPanChange: (id: string, pan: number) => void;
     onMuteToggle: (id: string) => void;
     onSoloToggle: (id: string) => void;
 }
@@ -24,13 +26,74 @@ const getTrackColor = (name: string) => {
     return 'bg-slate-600';
 };
 
+const PanKnob: React.FC<{ value: number; onChange: (val: number) => void }> = ({ value, onChange }) => {
+    // Value is -1 to 1. Angle ranges from -135 to 135 degrees
+    const angle = value * 135;
+
+    const handlePointerDown = (e: React.PointerEvent) => {
+        e.preventDefault();
+        // we capture the pointer to receive events even when the mouse leaves the element
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+        const startY = e.clientY;
+        const startValue = value;
+
+        const handlePointerMove = (moveEvent: PointerEvent) => {
+            const deltaY = startY - moveEvent.clientY;
+            // Sensitivity: 150 pixels for full sweep (-1 to 1 is range of 2)
+            let newValue = startValue + (deltaY / 75);
+            newValue = Math.max(-1, Math.min(1, newValue));
+
+            // Snap to center if close
+            if (Math.abs(newValue) < 0.05) newValue = 0;
+
+            onChange(newValue);
+        };
+
+        const handlePointerUp = (upEvent: PointerEvent) => {
+            (upEvent.target as HTMLElement).releasePointerCapture(upEvent.pointerId);
+            document.removeEventListener('pointermove', handlePointerMove);
+            document.removeEventListener('pointerup', handlePointerUp);
+        };
+
+        document.addEventListener('pointermove', handlePointerMove);
+        document.addEventListener('pointerup', handlePointerUp);
+    };
+
+    const handleDoubleClick = () => onChange(0);
+
+    return (
+        <div className="flex flex-col items-center mt-2 mb-1 select-none">
+            <div
+                className="relative w-8 h-8 rounded-full bg-gray-800 border-2 border-gray-600 cursor-ns-resize"
+                onPointerDown={handlePointerDown}
+                onDoubleClick={handleDoubleClick}
+                title="Pan (Drag up/down, Double-click to center)"
+            >
+                <div
+                    className="w-full h-full rounded-full transition-transform duration-75"
+                    style={{ transform: `rotate(${angle}deg)` }}
+                >
+                    <div className="mx-auto mt-0.5 w-0.5 h-2.5 bg-white rounded-sm" />
+                </div>
+            </div>
+            <div className="flex justify-between w-full px-[0.1rem] mt-0.5 text-[9px] font-bold text-gray-500">
+                <span>L</span>
+                <span>R</span>
+            </div>
+        </div>
+    );
+};
+
 export const MixerChannel: React.FC<MixerChannelProps> = ({
     trackId,
     name,
     volume,
+    pan,
     isMuted,
     isSoloed,
     onVolumeChange,
+    onPanChange,
     onMuteToggle,
     onSoloToggle,
 }) => {
@@ -41,6 +104,9 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
 
     return (
         <div className="flex flex-col w-[100px] h-full mx-1">
+            {/* Pan Knob */}
+            <PanKnob value={pan} onChange={(newPan) => onPanChange(trackId, newPan)} />
+
             {/* Main Channel Strip Area */}
             <div className={`flex-1 relative mb-2 rounded overflow-hidden bg-gray-700/50 border border-gray-600 group`}>
 

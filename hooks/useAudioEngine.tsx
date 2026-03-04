@@ -12,6 +12,7 @@ export interface Track {
     soloed: boolean;
     color: string;
     isVideoAudio?: boolean; // Flag for the extracted audio from video
+    pan: number; // -1 to 1, Left to Right
 }
 
 export interface Song {
@@ -42,6 +43,7 @@ interface AudioEngineContextType {
     stop: () => void;
     seek: (time: number) => void;
     setTrackVolume: (id: string, volume: number) => void;
+    setTrackPan: (id: string, pan: number) => void;
     toggleTrackMute: (id: string) => void;
     toggleTrackSolo: (id: string) => void;
     setVideoElement: (element: HTMLVideoElement | null) => void;
@@ -93,6 +95,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
     const gainNodesRef = useRef<Map<string, GainNode>>(new Map());
+    const pannerNodesRef = useRef<Map<string, StereoPannerNode>>(new Map());
     const masterGainRef = useRef<GainNode | null>(null);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const startTimeRef = useRef<number>(0);
@@ -157,6 +160,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 file,
                 buffer: audioBuffer,
                 volume: 1,
+                pan: name.toLowerCase().includes('click') || name.toLowerCase().includes('guia') || name.toLowerCase().includes('guide') ? -1 : 0,
                 muted: false,
                 soloed: false,
                 color: getTrackColor(name)
@@ -196,6 +200,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             file: videoFile,
             buffer: undefined,
             volume: oldVidTrack ? oldVidTrack.volume : 1,
+            pan: oldVidTrack ? oldVidTrack.pan : 0,
             muted: oldVidTrack ? oldVidTrack.muted : false,
             soloed: oldVidTrack ? oldVidTrack.soloed : false,
             color: '#a855f7'
@@ -213,6 +218,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 file: videoFile,
                 buffer: audioBuffer,
                 volume: oldVidAudioTrack ? oldVidAudioTrack.volume : 1,
+                pan: oldVidAudioTrack ? oldVidAudioTrack.pan : 0,
                 muted: oldVidAudioTrack ? oldVidAudioTrack.muted : false,
                 soloed: oldVidAudioTrack ? oldVidAudioTrack.soloed : false,
                 color: '#c084fc',
@@ -293,6 +299,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
         sourceNodesRef.current.clear();
         gainNodesRef.current.clear();
+        pannerNodesRef.current.clear();
     };
 
     const playAudio = useCallback((startOffset: number) => {
@@ -314,8 +321,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
             gainNode.gain.value = shouldLogicallyMute ? 0 : track.volume;
 
+            const pannerNode = audioContextRef.current!.createStereoPanner();
+            pannerNode.pan.value = track.pan !== undefined ? track.pan : 0;
+
             source.connect(gainNode);
-            gainNode.connect(masterGainRef.current!);
+            gainNode.connect(pannerNode);
+            pannerNode.connect(masterGainRef.current!);
             let trackWhen = 0;
             let trackOffset = startOffset;
 
@@ -337,6 +348,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             sourceNodesRef.current.set(track.id, source);
             gainNodesRef.current.set(track.id, gainNode);
+            pannerNodesRef.current.set(track.id, pannerNode);
 
             source.onended = () => { };
         });
@@ -471,11 +483,20 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     gainNode.gain.setTargetAtTime(targetVolume, audioContextRef.current.currentTime, 0.05);
                 }
             }
+
+            const pannerNode = pannerNodesRef.current.get(track.id);
+            if (pannerNode && audioContextRef.current && track.pan !== undefined) {
+                pannerNode.pan.setTargetAtTime(track.pan, audioContextRef.current.currentTime, 0.05);
+            }
         });
     }, [tracks, masterVolume]);
 
     const setTrackVolume = (id: string, volume: number) => {
         setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
+    };
+
+    const setTrackPan = (id: string, pan: number) => {
+        setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));
     };
 
     const toggleTrackMute = (id: string) => {
@@ -524,6 +545,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     file,
                     buffer: audioBuffer,
                     volume: oldT ? oldT.volume : 1,
+                    pan: oldT ? oldT.pan : (name.toLowerCase().includes('click') || name.toLowerCase().includes('guia') || name.toLowerCase().includes('guide') ? -1 : 0),
                     muted: oldT ? oldT.muted : false,
                     soloed: oldT ? oldT.soloed : false,
                     color: getTrackColor(name)
@@ -553,6 +575,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 file: song.videoFile,
                 buffer: undefined,
                 volume: oldVid ? oldVid.volume : 1,
+                pan: oldVid ? oldVid.pan : 0,
                 muted: oldVid ? oldVid.muted : false,
                 soloed: oldVid ? oldVid.soloed : false,
                 color: '#a855f7'
@@ -572,6 +595,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     file: song.videoFile,
                     buffer: audioBuffer,
                     volume: oldAudio ? oldAudio.volume : 1,
+                    pan: oldAudio ? oldAudio.pan : 0,
                     muted: oldAudio ? oldAudio.muted : false,
                     soloed: oldAudio ? oldAudio.soloed : false,
                     color: '#c084fc',
@@ -726,6 +750,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 tracks: (song.cachedTracks || []).map(t => ({
                     name: t.name,
                     volume: t.volume,
+                    pan: t.pan !== undefined ? t.pan : 0,
                     muted: t.muted,
                     soloed: t.soloed,
                     color: t.color,
@@ -769,6 +794,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     name: t.name,
                     file: null,
                     volume: t.volume,
+                    pan: t.pan !== undefined ? t.pan : 0,
                     muted: t.muted,
                     soloed: t.soloed,
                     color: t.color,
@@ -808,6 +834,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             stop,
             seek,
             setTrackVolume,
+            setTrackPan,
             toggleTrackMute,
             toggleTrackSolo,
             setVideoElement: (el) => videoRef.current = el,

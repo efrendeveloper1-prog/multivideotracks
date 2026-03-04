@@ -6,6 +6,7 @@ export const MixerBoard: React.FC = () => {
     const {
         tracks,
         setTrackVolume,
+        setTrackPan,
         toggleTrackMute,
         toggleTrackSolo
     } = useAudioEngine();
@@ -24,9 +25,11 @@ export const MixerBoard: React.FC = () => {
                     trackId={track.id}
                     name={track.name}
                     volume={track.volume}
+                    pan={track.pan !== undefined ? track.pan : 0}
                     isMuted={track.muted}
                     isSoloed={track.soloed}
                     onVolumeChange={setTrackVolume}
+                    onPanChange={setTrackPan}
                     onMuteToggle={toggleTrackMute}
                     onSoloToggle={toggleTrackSolo}
                 />
