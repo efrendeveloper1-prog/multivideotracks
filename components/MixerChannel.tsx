@@ -63,7 +63,7 @@ const PanKnob: React.FC<{ value: number; onChange: (val: number) => void }> = ({
     const handleDoubleClick = () => onChange(0);
 
     return (
-        <div className="flex flex-col items-center mt-2 mb-1 select-none">
+        <div className="flex flex-col items-center mb-1 select-none w-full">
             <div
                 className="relative w-8 h-8 rounded-full bg-gray-800 border-2 border-gray-600 cursor-ns-resize"
                 onPointerDown={handlePointerDown}
@@ -77,7 +77,7 @@ const PanKnob: React.FC<{ value: number; onChange: (val: number) => void }> = ({
                     <div className="mx-auto mt-0.5 w-0.5 h-2.5 bg-white rounded-sm" />
                 </div>
             </div>
-            <div className="flex justify-between w-full px-[0.1rem] mt-0.5 text-[9px] font-bold text-gray-500">
+            <div className="flex justify-between w-[40px] px-[0.1rem] mt-0.5 text-[9px] font-bold text-gray-500">
                 <span>L</span>
                 <span>R</span>
             </div>
@@ -104,11 +104,8 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
 
     return (
         <div className="flex flex-col w-[100px] h-full mx-1">
-            {/* Pan Knob */}
-            <PanKnob value={pan} onChange={(newPan) => onPanChange(trackId, newPan)} />
-
             {/* Main Channel Strip Area */}
-            <div className={`flex-1 relative mb-2 rounded overflow-hidden bg-gray-700/50 border border-gray-600 group`}>
+            <div className={`flex-1 relative mb-2 mt-2 rounded overflow-hidden bg-gray-700/50 border border-gray-600 group`}>
 
                 {/* Background "Fader" Level */}
                 <div
@@ -137,29 +134,34 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
                 />
             </div>
 
-            {/* Buttons Container */}
-            <div className="flex flex-col gap-1 h-[80px]">
-                {/* ON/MUTE Button */}
-                <button
-                    onClick={() => onMuteToggle(trackId)}
-                    className={`flex-1 font-bold text-sm tracking-widest transition-colors ${!isMuted
-                        ? 'bg-gray-600 text-white border-b-2 border-gray-800'
-                        : 'bg-gray-800 text-gray-500 border border-gray-700'
-                        }`}
-                >
-                    {!isMuted ? 'ON' : 'OFF'}
-                </button>
+            {/* Bottom Controls Area */}
+            <div className="flex flex-col gap-2 pb-1 shrink-0">
+                {/* Pan Knob */}
+                <PanKnob value={pan} onChange={(newPan) => onPanChange(trackId, newPan)} />
 
-                {/* SOLO Button */}
-                <button
-                    onClick={() => onSoloToggle(trackId)}
-                    className={`h-[30px] text-xs font-bold tracking-widest transition-colors ${isSoloed
-                        ? 'bg-gray-400 text-black'
-                        : 'bg-gray-500 text-gray-300 hover:bg-gray-400 hover:text-white'
-                        }`}
-                >
-                    SOLO
-                </button>
+                {/* Mute and Solo Buttons */}
+                <div className="flex flex-row gap-1 px-1">
+                    <button
+                        onClick={() => onMuteToggle(trackId)}
+                        className={`flex-1 h-8 rounded-md font-bold text-sm transition-colors ${isMuted
+                                ? 'bg-red-600/90 text-white shadow-inner'
+                                : 'bg-[#2A2A2A] text-gray-300 hover:bg-[#3A3A3A] hover:text-white border border-gray-700/50'
+                            }`}
+                        title="Mute"
+                    >
+                        M
+                    </button>
+                    <button
+                        onClick={() => onSoloToggle(trackId)}
+                        className={`flex-1 h-8 rounded-md font-bold text-sm transition-colors ${isSoloed
+                                ? 'bg-yellow-500 text-black shadow-inner'
+                                : 'bg-[#2A2A2A] text-gray-300 hover:bg-[#3A3A3A] hover:text-white border border-gray-700/50'
+                            }`}
+                        title="Solo"
+                    >
+                        S
+                    </button>
+                </div>
             </div>
 
             {/* Visual Indicator Line (Green/Red sidebar like in Prime) - Optional */}
