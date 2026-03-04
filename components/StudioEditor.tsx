@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { SecondScreen } from './SecondScreen';
+import { AudioMeter } from './AudioMeter';
 import { MixerBoard } from './MixerBoard';
 import { TransportControls } from './TransportControls';
 import { SongList } from './SongList';
@@ -245,6 +246,14 @@ const EditorContent: React.FC = () => {
                             </div>
                         )}
                         <div className="absolute top-1 right-1 bg-black/60 px-1 py-0.5 rounded text-[8px] text-gray-400">Preview</div>
+
+                        {/* Audio Meter Overlay */}
+                        <div className="absolute top-1 left-2 bottom-1 z-10 flex flex-col items-center justify-end pb-1 pointer-events-none opacity-80">
+                            <AudioMeter />
+                            <div className="flex gap-1.5 text-[6px] text-gray-400 font-bold mt-1">
+                                <span>L</span><span>R</span>
+                            </div>
+                        </div>
                     </div>
 
                     {/* Second Screen Button */}

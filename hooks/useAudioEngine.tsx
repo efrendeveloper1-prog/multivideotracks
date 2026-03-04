@@ -70,6 +70,8 @@ interface AudioEngineContextType {
     // Audio analysis
     songAnalysis: AudioAnalysis | null;
     loadingProgress: number | null;
+    getMasterLevels: () => [number, number];
+    getTrackLevel: (id: string) => number;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -109,6 +111,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const videoDurationRef = useRef<number>(0);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
+    const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
+    const trackAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
 
     // Initialize AudioContext
     useEffect(() => {
@@ -116,6 +120,20 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         audioContextRef.current = new AudioCtx();
         masterGainRef.current = audioContextRef.current.createGain();
         masterGainRef.current.connect(audioContextRef.current.destination);
+
+        const splitter = audioContextRef.current.createChannelSplitter(2);
+        masterGainRef.current.connect(splitter);
+
+        const analyserL = audioContextRef.current.createAnalyser();
+        analyserL.fftSize = 512;
+        const analyserR = audioContextRef.current.createAnalyser();
+        analyserR.fftSize = 512;
+
+        splitter.connect(analyserL, 0);
+        splitter.connect(analyserR, 1);
+
+        analysersRef.current = { left: analyserL, right: analyserR };
+
         return () => {
             audioContextRef.current?.close();
         };
@@ -303,6 +321,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         sourceNodesRef.current.clear();
         gainNodesRef.current.clear();
         pannerNodesRef.current.clear();
+        trackAnalysersRef.current.clear();
     };
 
     const playAudio = useCallback((startOffset: number) => {
@@ -327,8 +346,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const pannerNode = audioContextRef.current!.createStereoPanner();
             pannerNode.pan.value = track.pan !== undefined ? track.pan : 0;
 
+            const analyserNode = audioContextRef.current!.createAnalyser();
+            analyserNode.fftSize = 256;
+
             source.connect(gainNode);
-            gainNode.connect(pannerNode);
+            gainNode.connect(analyserNode);
+            analyserNode.connect(pannerNode);
             pannerNode.connect(masterGainRef.current!);
             let trackWhen = 0;
             let trackOffset = startOffset;
@@ -352,6 +375,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             sourceNodesRef.current.set(track.id, source);
             gainNodesRef.current.set(track.id, gainNode);
             pannerNodesRef.current.set(track.id, pannerNode);
+            trackAnalysersRef.current.set(track.id, analyserNode);
 
             source.onended = () => { };
         });
@@ -846,6 +870,41 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [stopAudioInternal]);
 
+    const getMasterLevels = useCallback((): [number, number] => {
+        if (!analysersRef.current || !isPlayingRef.current) return [0, 0];
+        const dataL = new Float32Array(analysersRef.current.left.fftSize);
+        const dataR = new Float32Array(analysersRef.current.right.fftSize);
+        analysersRef.current.left.getFloatTimeDomainData(dataL);
+        analysersRef.current.right.getFloatTimeDomainData(dataR);
+
+        let sumL = 0, sumR = 0;
+        for (let i = 0; i < dataL.length; i++) {
+            sumL += dataL[i] * dataL[i];
+            sumR += dataR[i] * dataR[i];
+        }
+        const rmsL = Math.sqrt(sumL / dataL.length);
+        const rmsR = Math.sqrt(sumR / dataR.length);
+
+        return [Math.min(1, rmsL * 4), Math.min(1, rmsR * 4)];
+    }, []);
+
+    const getTrackLevel = useCallback((id: string): number => {
+        if (!isPlayingRef.current) return 0;
+        const analyser = trackAnalysersRef.current.get(id);
+        if (!analyser) return 0;
+
+        const data = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(data);
+
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+            sum += data[i] * data[i];
+        }
+        const rms = Math.sqrt(sum / data.length);
+        // Multiply by 6 for more sensitive visuals on individual channels
+        return Math.min(1, rms * 6);
+    }, []);
+
     return (
         <AudioEngineContext.Provider value={{
             tracks,
@@ -882,7 +941,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             songAnalysis,
             videoOffset,
             setVideoOffset,
-            loadingProgress
+            loadingProgress,
+            getMasterLevels,
+            getTrackLevel
         }}>
             {children}
         </AudioEngineContext.Provider>

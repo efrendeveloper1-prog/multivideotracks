@@ -6,6 +6,7 @@ import { useAudioEngine } from '@/hooks/useAudioEngine';
 export const SecondScreen: React.FC = () => {
     const { tracks } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
+    const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
     const isActive = !!secondWindow && !secondWindow.closed;
 
@@ -73,7 +74,7 @@ export const SecondScreen: React.FC = () => {
             if (secondWindow?.closed) return;
 
             const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-            if (videoEl) {
+            if (videoEl && !isBlackout) {
                 channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: videoEl.currentTime,
@@ -91,7 +92,7 @@ export const SecondScreen: React.FC = () => {
         }, 500);
 
         return () => clearInterval(syncInterval);
-    }, [isActive, secondWindow]);
+    }, [isActive, secondWindow, isBlackout]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {
@@ -108,47 +109,65 @@ export const SecondScreen: React.FC = () => {
     }, [secondWindow]);
 
     return (
-        <button
-            onClick={toggleSecondScreen}
-            className={`
-                flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
-                transition-all duration-200 text-[11px] font-medium
-                ${isActive
-                    ? 'bg-green-900/40 text-green-400 border border-green-700/50 hover:bg-green-900/60'
-                    : 'bg-gray-800 text-red-400 border border-gray-700 hover:bg-gray-700'
-                }
-            `}
-            title={isActive ? 'Segunda pantalla activa - Click para desconectar' : 'Enviar a segunda pantalla'}
-        >
-            {/* Dual Monitor SVG Icon */}
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-4 h-4 shrink-0"
+        <div className="flex gap-2">
+            <button
+                onClick={toggleSecondScreen}
+                className={`
+                    flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
+                    transition-all duration-200 text-[11px] font-medium
+                    ${isActive
+                        ? 'bg-green-900/40 text-green-400 border border-green-700/50 hover:bg-green-900/60'
+                        : 'bg-gray-800 text-red-400 border border-gray-700 hover:bg-gray-700'
+                    }
+                `}
+                title={isActive ? 'Segunda pantalla activa - Click para desconectar' : 'Enviar a segunda pantalla'}
             >
-                {/* Front monitor */}
-                <rect x="1" y="4" width="13" height="10" rx="1" />
-                <line x1="4" y1="14" x2="10" y2="14" />
-                <line x1="7" y1="14" x2="7" y2="17" />
-                <line x1="4" y1="17" x2="10" y2="17" />
-                {/* Back monitor */}
-                <rect x="10" y="1" width="13" height="10" rx="1" />
-                <line x1="13" y1="11" x2="19" y2="11" />
-                <line x1="16" y1="11" x2="16" y2="14" />
-                <line x1="13" y1="14" x2="19" y2="14" />
-            </svg>
+                {/* Dual Monitor SVG Icon */}
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-4 h-4 shrink-0"
+                >
+                    {/* Front monitor */}
+                    <rect x="1" y="4" width="13" height="10" rx="1" />
+                    <line x1="4" y1="14" x2="10" y2="14" />
+                    <line x1="7" y1="14" x2="7" y2="17" />
+                    <line x1="4" y1="17" x2="10" y2="17" />
+                    {/* Back monitor */}
+                    <rect x="10" y="1" width="13" height="10" rx="1" />
+                    <line x1="13" y1="11" x2="19" y2="11" />
+                    <line x1="16" y1="11" x2="16" y2="14" />
+                    <line x1="13" y1="14" x2="19" y2="14" />
+                </svg>
 
-            {/* Status dot */}
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+                {/* Status dot */}
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
 
-            <span className="truncate">
-                {isActive ? 'ON' : '2nd Screen'}
-            </span>
-        </button>
+                <span className="truncate">
+                    {isActive ? 'ON' : '2nd Screen'}
+                </span>
+            </button>
+
+            <button
+                onClick={() => setIsBlackout(prev => !prev)}
+                className={`
+                    flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
+                    transition-all duration-200 text-[11px] font-medium
+                    ${isBlackout
+                        ? 'bg-red-900/40 text-red-500 border border-red-700/50 hover:bg-red-900/60'
+                        : 'bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700'
+                    }
+                `}
+                title={isBlackout ? 'Restaurar imagen' : 'Mandar a negro (Blackout)'}
+            >
+                <span className="text-sm font-bold truncate shrink-0">×</span>
+                <span className="truncate">Clear</span>
+            </button>
+        </div>
     );
 };
