@@ -155,17 +155,27 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [masterVolume]);
 
-    // Color helper
     const getTrackColor = (name: string) => {
         const n = name.toLowerCase();
         if (n.includes('drum') || n.includes('bateria')) return '#06b6d4';
         if (n.includes('bass') || n.includes('bajo')) return '#0d9488';
         if (n.includes('vox') || n.includes('voz') || n.includes('vocal')) return '#2563eb';
-        if (n.includes('click')) return '#dc2626';
+        if (n.includes('click') || n.includes('guia') || n.includes('cue') || n.includes('guide')) return '#dc2626';
         if (n.includes('key') || n.includes('piano') || n.includes('synth')) return '#d946ef';
         if (n.includes('guitar') || n.includes('guit')) return '#f59e0b';
         if (n.includes('video')) return '#a855f7';
         return '#94a3b8';
+    };
+
+    // Sort helper to put guide tracks first
+    const sortTracks = (trackList: Track[]) => {
+        return [...trackList].sort((a, b) => {
+            const isGuideA = a.name.toLowerCase().includes('click') || a.name.toLowerCase().includes('guia') || a.name.toLowerCase().includes('cue') || a.name.toLowerCase().includes('guide');
+            const isGuideB = b.name.toLowerCase().includes('click') || b.name.toLowerCase().includes('guia') || b.name.toLowerCase().includes('cue') || b.name.toLowerCase().includes('guide');
+            if (isGuideA && !isGuideB) return -1;
+            if (!isGuideA && isGuideB) return 1;
+            return 0; // maintain original relative order otherwise
+        });
     };
 
     const addTrack = useCallback(async (file: File, name: string) => {
@@ -187,7 +197,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 color: getTrackColor(name)
             };
 
-            setTracks(prev => [...prev, newTrack]);
+            setTracks(prev => sortTracks([...prev, newTrack]));
             setDuration(prev => Math.max(prev, audioBuffer.duration));
 
             // Run audio analysis on first audio track
@@ -254,7 +264,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const filtered = prev.filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
             const newTracks = [...filtered, videoTrack];
             if (audioTrack) newTracks.push(audioTrack);
-            return newTracks;
+            return sortTracks(newTracks);
         });
 
         // Get video duration
@@ -661,7 +671,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         return {
             ...song,
-            cachedTracks: newTracks,
+            cachedTracks: sortTracks(newTracks),
             cachedDuration: placeholderSettings?.cachedDuration || newDuration || newVideoDuration,
             cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
             cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
