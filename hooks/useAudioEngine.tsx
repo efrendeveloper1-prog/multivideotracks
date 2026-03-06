@@ -2,6 +2,11 @@ import React, { createContext, useContext, useRef, useState, useEffect, useCallb
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
 
 // Types
+export interface CutRegion {
+    start: number; // seconds
+    end: number;   // seconds
+}
+
 export interface Track {
     id: string;
     name: string;
@@ -27,6 +32,7 @@ export interface Song {
     cachedDuration?: number;
     cachedVideoDuration?: number;
     cachedVideoOffset?: number;
+    cachedCutRegions?: CutRegion[];
     isPlaceholder?: boolean;
     analysis?: AudioAnalysis | null;
 }
@@ -54,6 +60,11 @@ interface AudioEngineContextType {
     trimVideoToAudio: () => void; // Trim video to match audio duration
     videoOffset: number; // Horizontal offset in seconds for video sync
     setVideoOffset: (offset: number) => void;
+    // Video cut regions
+    cutRegions: CutRegion[];
+    addCutRegion: (region: CutRegion) => void;
+    removeCutRegion: (index: number) => void;
+    revertVideo: () => void;
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -90,6 +101,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [masterVolume, setMasterVolume] = useState(1);
     const [videoDuration, setVideoDuration] = useState(0);
     const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
+    const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
@@ -109,6 +121,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const videoOffsetRef = useRef<number>(0);
     const tracksRef = useRef<Track[]>([]);
     const videoDurationRef = useRef<number>(0);
+    const cutRegionsRef = useRef<CutRegion[]>([]);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
@@ -145,6 +158,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
     useEffect(() => { tracksRef.current = tracks; }, [tracks]);
     useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
+    useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
     useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
     useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
 
@@ -435,6 +449,24 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const calculatedTime = now - startTimeRef.current;
                 const dur = durationRef.current;
 
+                // Auto-skip cut regions during playback
+                const activeCut = cutRegionsRef.current.find(
+                    r => calculatedTime >= r.start && calculatedTime < r.end
+                );
+                if (activeCut) {
+                    const skipTo = activeCut.end;
+                    stopAudioInternal();
+                    pauseTimeRef.current = skipTo;
+                    startTimeRef.current = audioContextRef.current!.currentTime - skipTo;
+                    playAudio(skipTo);
+                    if (videoRef.current) {
+                        videoRef.current.currentTime = skipTo + videoOffsetRef.current;
+                    }
+                    setCurrentTime(skipTo);
+                    animationFrameRef.current = requestAnimationFrame(update);
+                    return;
+                }
+
                 if (videoRef.current && videoRef.current.paused && isPlayingRef.current) {
                     const videoStartOffset = calculatedTime + videoOffsetRef.current;
                     if (videoStartOffset >= 0) {
@@ -557,6 +589,19 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setDuration(audioDur);
         }
     }, [tracks]);
+
+    // Cut region management
+    const addCutRegion = useCallback((region: CutRegion) => {
+        setCutRegions(prev => [...prev, { start: region.start, end: region.end }].sort((a, b) => a.start - b.start));
+    }, []);
+
+    const removeCutRegion = useCallback((index: number) => {
+        setCutRegions(prev => prev.filter((_, i) => i !== index));
+    }, []);
+
+    const revertVideo = useCallback(() => {
+        setCutRegions([]);
+    }, []);
 
     // Playlist management
     const prepareSongCache = useCallback(async (song: Song, placeholderSettings?: Song): Promise<Song> => {
@@ -702,6 +747,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedDuration: durationRef.current,
                         cachedVideoDuration: videoDurationRef.current,
                         cachedVideoOffset: videoOffsetRef.current,
+                        cachedCutRegions: cutRegionsRef.current,
                         analysis: songAnalysisRef.current
                     };
                 }
@@ -731,6 +777,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setDuration(song.cachedDuration || 0);
             setVideoDuration(song.cachedVideoDuration || 0);
             setVideoOffset(song.cachedVideoOffset || 0);
+            setCutRegions(song.cachedCutRegions || []);
             setSongAnalysis(song.analysis || null);
         } else {
             // Fresh load
@@ -775,6 +822,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setDuration(song.cachedDuration || 0);
         setVideoDuration(song.cachedVideoDuration || 0);
         setVideoOffset(song.cachedVideoOffset || 0);
+        setCutRegions(song.cachedCutRegions || []);
         setSongAnalysis(song.analysis || null);
     }, [updateActiveSongCache]);
 
@@ -951,6 +999,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             songAnalysis,
             videoOffset,
             setVideoOffset,
+            cutRegions,
+            addCutRegion,
+            removeCutRegion,
+            revertVideo,
             loadingProgress,
             getMasterLevels,
             getTrackLevel
