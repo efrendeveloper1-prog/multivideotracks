@@ -65,6 +65,7 @@ interface AudioEngineContextType {
     addCutRegion: (region: CutRegion) => void;
     removeCutRegion: (index: number) => void;
     revertVideo: () => void;
+    isInCutRegion: boolean; // true when playhead is inside a cut region (gap mode)
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -99,9 +100,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [masterVolume, setMasterVolume] = useState(1);
+    const masterVolumeRef = useRef<number>(1);
     const [videoDuration, setVideoDuration] = useState(0);
     const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
     const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
+    const [isInCutRegion, setIsInCutRegion] = useState(false);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
@@ -122,6 +125,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const tracksRef = useRef<Track[]>([]);
     const videoDurationRef = useRef<number>(0);
     const cutRegionsRef = useRef<CutRegion[]>([]);
+    const isInCutRegionRef = useRef<boolean>(false);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
@@ -161,6 +165,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
     useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
     useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
+    useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -346,6 +351,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         gainNodesRef.current.clear();
         pannerNodesRef.current.clear();
         trackAnalysersRef.current.clear();
+        // Always restore master gain — in case we stopped mid cut-region
+        if (masterGainRef.current && audioContextRef.current) {
+            masterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
+            masterGainRef.current.gain.setTargetAtTime(masterVolumeRef.current, audioContextRef.current.currentTime, 0.02);
+        }
+        if (isInCutRegionRef.current) {
+            isInCutRegionRef.current = false;
+            setIsInCutRegion(false);
+        }
     };
 
     const playAudio = useCallback((startOffset: number) => {
@@ -449,22 +463,44 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const calculatedTime = now - startTimeRef.current;
                 const dur = durationRef.current;
 
-                // Auto-skip cut regions during playback
+                // Absolute-position cut regions: mute audio+video during gap, keep time advancing
                 const activeCut = cutRegionsRef.current.find(
                     r => calculatedTime >= r.start && calculatedTime < r.end
                 );
                 if (activeCut) {
-                    const skipTo = activeCut.end;
-                    stopAudioInternal();
-                    pauseTimeRef.current = skipTo;
-                    startTimeRef.current = audioContextRef.current!.currentTime - skipTo;
-                    playAudio(skipTo);
-                    if (videoRef.current) {
-                        videoRef.current.currentTime = skipTo + videoOffsetRef.current;
+                    // Mute master gain during the gap (audio keeps playing but is silent)
+                    if (!isInCutRegionRef.current) {
+                        isInCutRegionRef.current = true;
+                        setIsInCutRegion(true);
+                        if (masterGainRef.current && audioContextRef.current) {
+                            masterGainRef.current.gain.setTargetAtTime(
+                                0, audioContextRef.current.currentTime, 0.02
+                            );
+                        }
+                        // Pause video during the gap (stops visual output)
+                        if (videoRef.current && !videoRef.current.paused) {
+                            videoRef.current.pause();
+                        }
                     }
-                    setCurrentTime(skipTo);
-                    animationFrameRef.current = requestAnimationFrame(update);
-                    return;
+                } else {
+                    // We are outside a cut region — restore gain / video if needed
+                    if (isInCutRegionRef.current) {
+                        isInCutRegionRef.current = false;
+                        setIsInCutRegion(false);
+                        if (masterGainRef.current && audioContextRef.current) {
+                            masterGainRef.current.gain.setTargetAtTime(
+                                masterVolumeRef.current, audioContextRef.current.currentTime, 0.02
+                            );
+                        }
+                        // Resume video at the correct position
+                        if (videoRef.current) {
+                            const videoPos = calculatedTime + videoOffsetRef.current;
+                            if (videoPos >= 0) {
+                                videoRef.current.currentTime = videoPos;
+                                videoRef.current.play().catch(() => { });
+                            }
+                        }
+                    }
                 }
 
                 if (videoRef.current && videoRef.current.paused && isPlayingRef.current) {
@@ -1003,6 +1039,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             addCutRegion,
             removeCutRegion,
             revertVideo,
+            isInCutRegion,
             loadingProgress,
             getMasterLevels,
             getTrackLevel

@@ -14,7 +14,7 @@ const EditorContent: React.FC = () => {
     const {
         setVideoElement, tracks, currentTime, duration, seek,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
-        cutRegions, addCutRegion, removeCutRegion, revertVideo
+        cutRegions, addCutRegion, removeCutRegion, revertVideo, isInCutRegion
     } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -24,10 +24,10 @@ const EditorContent: React.FC = () => {
 
     // Edit mode state
     const [editMode, setEditMode] = useState(false);
-    const [isDraggingSelection, setIsDraggingSelection] = useState(false);
-    const [selectionStart, setSelectionStart] = useState<number | null>(null); // in seconds
-    const [selectionEnd, setSelectionEnd] = useState<number | null>(null);     // in seconds
-    const [selectedCutIndex, setSelectedCutIndex] = useState<number | null>(null);
+    // Split points: sorted array of timestamps (seconds) that divide the timeline into segments
+    const [splitPoints, setSplitPoints] = useState<number[]>([]);
+    // Which segment is currently selected (index into the array of gaps between boundaries)
+    const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -44,9 +44,8 @@ const EditorContent: React.FC = () => {
     useEffect(() => {
         if (!hasVideo) {
             setEditMode(false);
-            setSelectedCutIndex(null);
-            setSelectionStart(null);
-            setSelectionEnd(null);
+            setSelectedSegmentIndex(null);
+            setSplitPoints([]);
         }
     }, [hasVideo]);
 
@@ -63,17 +62,96 @@ const EditorContent: React.FC = () => {
         }
     }, [videoTrack]);
 
-    // Delete key handler
+    // --- Segment helpers ---
+
+    /**
+     * Compute the list of segment boundaries from split points.
+     * Boundaries are: [0, ...splitPoints, duration] (sorted).
+     * Each segment i spans from boundaries[i] to boundaries[i+1].
+     */
+    const segmentBoundaries = useMemo(() => {
+        if (duration <= 0) return [0, duration];
+        return [0, ...splitPoints, duration];
+    }, [splitPoints, duration]);
+
+    /**
+     * For each segment, determine whether it is a "cut" segment
+     * (i.e. it overlaps with at least one committed cutRegion).
+     */
+    const segmentCutStatus = useMemo(() => {
+        return segmentBoundaries.slice(0, -1).map((start, i) => {
+            const end = segmentBoundaries[i + 1];
+            // A segment is "cut" if there exists a cutRegion that fully covers it
+            // (within a small tolerance)
+            return cutRegions.some(
+                r => r.start <= start + 0.05 && r.end >= end - 0.05
+            );
+        });
+    }, [segmentBoundaries, cutRegions]);
+
+    /**
+     * Find the cutRegion index that corresponds to a segment.
+     */
+    const findCutRegionForSegment = useCallback((segIdx: number) => {
+        const start = segmentBoundaries[segIdx];
+        const end = segmentBoundaries[segIdx + 1];
+        return cutRegions.findIndex(
+            r => r.start <= start + 0.05 && r.end >= end - 0.05
+        );
+    }, [segmentBoundaries, cutRegions]);
+
+    // --- Keyboard handler ---
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.key === 'Delete' || e.key === 'Supr') && selectedCutIndex !== null && editMode) {
-                removeCutRegion(selectedCutIndex);
-                setSelectedCutIndex(null);
+            // Ignore if user is typing in an input/textarea
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+            if (!editMode) return;
+
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                if (duration <= 0) return;
+                const t = currentTime;
+
+                setSplitPoints(prev => {
+                    // Guard: don't add if already very close to an existing point or boundary
+                    const tooClose = prev.some(p => Math.abs(p - t) < 0.15) ||
+                        t < 0.15 || t > duration - 0.15;
+                    if (tooClose) return prev;
+                    return [...prev, t].sort((a, b) => a - b);
+                });
+                setSelectedSegmentIndex(null);
+            }
+
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                if (selectedSegmentIndex === null) return;
+
+                const isCut = segmentCutStatus[selectedSegmentIndex];
+                if (isCut) {
+                    // Restore: remove the corresponding cutRegion
+                    const crIdx = findCutRegionForSegment(selectedSegmentIndex);
+                    if (crIdx !== -1) {
+                        removeCutRegion(crIdx);
+                    }
+                } else {
+                    // Mark as cut: add a cutRegion spanning this segment
+                    const start = segmentBoundaries[selectedSegmentIndex];
+                    const end = segmentBoundaries[selectedSegmentIndex + 1];
+                    addCutRegion({ start, end });
+                }
+                setSelectedSegmentIndex(null);
             }
         };
+
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedCutIndex, editMode, removeCutRegion]);
+    }, [
+        editMode, duration, currentTime, selectedSegmentIndex,
+        segmentCutStatus, segmentBoundaries, findCutRegionForSegment,
+        addCutRegion, removeCutRegion
+    ]);
 
     // Create a master (mixed) AudioBuffer from all audio tracks
     const masterBuffer = useMemo(() => {
@@ -116,7 +194,7 @@ const EditorContent: React.FC = () => {
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
-    // Timeline interaction helpers
+    // Timeline click: seek in normal mode, select segment in edit mode
     const getTimeFromClientX = useCallback((clientX: number) => {
         if (!timelineRef.current || duration <= 0) return null;
         const rect = timelineRef.current.getBoundingClientRect();
@@ -124,54 +202,23 @@ const EditorContent: React.FC = () => {
         return ratio * duration;
     }, [duration]);
 
-    const handleTimelineMouseDown = useCallback((e: React.MouseEvent) => {
+    const handleTimelineClick = useCallback((e: React.MouseEvent) => {
         if (!editMode) {
-            // Normal mode: seek
             const t = getTimeFromClientX(e.clientX);
             if (t !== null) seek(t);
             return;
         }
-        // Edit mode: start selection
+        // In edit mode: determine which segment was clicked and select it
+        if (duration <= 0) return;
         const t = getTimeFromClientX(e.clientX);
         if (t === null) return;
-        setSelectedCutIndex(null);
-        setSelectionStart(t);
-        setSelectionEnd(t);
-        setIsDraggingSelection(true);
-    }, [editMode, getTimeFromClientX, seek]);
-
-    const handleTimelineMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!isDraggingSelection) return;
-        const t = getTimeFromClientX(e.clientX);
-        if (t === null) return;
-        setSelectionEnd(t);
-    }, [isDraggingSelection, getTimeFromClientX]);
-
-    const handleTimelineMouseUp = useCallback(() => {
-        if (!isDraggingSelection) return;
-        setIsDraggingSelection(false);
-        if (selectionStart !== null && selectionEnd !== null) {
-            const s = Math.min(selectionStart, selectionEnd);
-            const e = Math.max(selectionStart, selectionEnd);
-            // Only register if the selection has some minimum width (> 0.1s)
-            if (e - s > 0.1) {
-                addCutRegion({ start: s, end: e });
-            }
+        const segIdx = segmentBoundaries.findIndex((b, i) =>
+            i < segmentBoundaries.length - 1 && t >= b && t < segmentBoundaries[i + 1]
+        );
+        if (segIdx !== -1) {
+            setSelectedSegmentIndex(prev => prev === segIdx ? null : segIdx);
         }
-        setSelectionStart(null);
-        setSelectionEnd(null);
-    }, [isDraggingSelection, selectionStart, selectionEnd, addCutRegion]);
-
-    // Selection overlay position (as percentage of timeline)
-    const selectionOverlay = useMemo(() => {
-        if (selectionStart === null || selectionEnd === null || duration <= 0) return null;
-        const s = Math.min(selectionStart, selectionEnd);
-        const e = Math.max(selectionStart, selectionEnd);
-        return {
-            left: `${(s / duration) * 100}%`,
-            width: `${((e - s) / duration) * 100}%`,
-        };
-    }, [selectionStart, selectionEnd, duration]);
+    }, [editMode, duration, getTimeFromClientX, seek, segmentBoundaries]);
 
     return (
         <div className="flex flex-col h-screen h-[100dvh] bg-black text-white overflow-hidden font-sans">
@@ -190,7 +237,11 @@ const EditorContent: React.FC = () => {
                     {/* Revert button — only visible in edit mode */}
                     {editMode && hasVideo && (
                         <button
-                            onClick={() => { revertVideo(); setSelectedCutIndex(null); }}
+                            onClick={() => {
+                                revertVideo();
+                                setSplitPoints([]);
+                                setSelectedSegmentIndex(null);
+                            }}
                             title="Volver al original (borrar todos los cortes)"
                             className="flex items-center gap-1 bg-amber-700 hover:bg-amber-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-white transition-colors"
                         >
@@ -203,9 +254,8 @@ const EditorContent: React.FC = () => {
                         onClick={() => {
                             if (!hasVideo) return;
                             setEditMode(prev => !prev);
-                            setSelectedCutIndex(null);
-                            setSelectionStart(null);
-                            setSelectionEnd(null);
+                            setSelectedSegmentIndex(null);
+                            setSplitPoints([]);
                         }}
                         disabled={!hasVideo}
                         title={hasVideo ? (editMode ? 'Salir del modo edición' : 'Entrar en modo edición') : 'Carga un video para editar'}
@@ -235,9 +285,9 @@ const EditorContent: React.FC = () => {
                         <div className="flex items-center gap-2 px-2 py-1 mb-1 bg-blue-900/40 border border-blue-700/50 rounded text-blue-300 text-[10px] sm:text-xs shrink-0">
                             <span>✂</span>
                             <span>
-                                Arrastra en el timeline para marcar un corte.&nbsp;
-                                Haz clic en un corte (rojo) para seleccionarlo.&nbsp;
-                                Pulsa <kbd className="bg-blue-800 px-1 rounded">Suprimir</kbd> para eliminar el seleccionado.
+                                Pulsa <kbd className="bg-blue-800 px-1 rounded">S</kbd> para dividir en la posición del playhead.&nbsp;
+                                Haz clic en un segmento para seleccionarlo.&nbsp;
+                                Pulsa <kbd className="bg-blue-800 px-1 rounded">Supr</kbd> para eliminar / restaurar el segmento seleccionado.
                             </span>
                         </div>
                     )}
@@ -247,13 +297,10 @@ const EditorContent: React.FC = () => {
                         ref={timelineRef}
                         className={`bg-gray-900 mb-1 sm:mb-2 rounded border overflow-hidden flex flex-col relative shrink-0 select-none
                             ${editMode
-                                ? 'border-blue-700 cursor-crosshair'
+                                ? 'border-blue-700 cursor-pointer'
                                 : 'border-gray-700 cursor-crosshair'
                             }`}
-                        onMouseDown={handleTimelineMouseDown}
-                        onMouseMove={handleTimelineMouseMove}
-                        onMouseUp={handleTimelineMouseUp}
-                        onMouseLeave={handleTimelineMouseUp}
+                        onClick={handleTimelineClick}
                     >
 
                         {/* Trim Video Warning */}
@@ -273,7 +320,7 @@ const EditorContent: React.FC = () => {
                         {videoTrack && (
                             <div className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden"
                                 onMouseDown={(e) => {
-                                    if (editMode) return; // Don't allow offset dragging in edit mode
+                                    if (editMode) return;
                                     e.stopPropagation();
                                     setIsDraggingOffset(true);
                                     dragStartXRef.current = e.clientX;
@@ -289,7 +336,7 @@ const EditorContent: React.FC = () => {
                                 }}
                                 onMouseUp={() => setIsDraggingOffset(false)}
                                 onMouseLeave={() => setIsDraggingOffset(false)}
-                                style={{ cursor: editMode ? 'crosshair' : isDraggingOffset ? 'grabbing' : 'grab' }}
+                                style={{ cursor: editMode ? 'pointer' : isDraggingOffset ? 'grabbing' : 'grab' }}
                             >
                                 <div
                                     className="flex flex-col relative w-full"
@@ -353,46 +400,63 @@ const EditorContent: React.FC = () => {
 
                         {/* ── Overlays (all absolute, full-height of timeline container) ── */}
 
-                        {/* Cut region overlays (committed) */}
-                        {duration > 0 && cutRegions.map((region, idx) => {
-                            const left = (region.start / duration) * 100;
-                            const width = ((region.end - region.start) / duration) * 100;
-                            const isSelected = selectedCutIndex === idx;
+                        {/* Segment overlays in edit mode */}
+                        {editMode && duration > 0 && segmentBoundaries.slice(0, -1).map((start, i) => {
+                            const end = segmentBoundaries[i + 1];
+                            const isCut = segmentCutStatus[i];
+                            const isSelected = selectedSegmentIndex === i;
+                            const leftPct = (start / duration) * 100;
+                            const widthPct = ((end - start) / duration) * 100;
+
                             return (
                                 <div
-                                    key={idx}
-                                    className={`absolute top-0 bottom-0 z-20 transition-colors cursor-pointer
-                                        ${isSelected
-                                            ? 'bg-red-500/40 border-2 border-red-400'
-                                            : 'bg-red-900/35 border border-red-700/60 hover:bg-red-800/45'
+                                    key={i}
+                                    className={`absolute top-0 bottom-0 z-20 transition-all duration-100 cursor-pointer
+                                        ${isCut
+                                            ? isSelected
+                                                ? 'bg-red-500/50 border-2 border-red-400'
+                                                : 'bg-red-900/40 border border-red-700/60 hover:bg-red-800/50'
+                                            : isSelected
+                                                ? 'bg-blue-500/25 border-2 border-blue-400'
+                                                : 'bg-transparent border border-transparent hover:bg-white/5 hover:border-blue-700/40'
                                         }`}
-                                    style={{ left: `${left}%`, width: `${width}%` }}
-                                    onMouseDown={(e) => {
+                                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                    onClick={(e) => {
                                         e.stopPropagation();
-                                        setSelectedCutIndex(isSelected ? null : idx);
+                                        setSelectedSegmentIndex(prev => prev === i ? null : i);
                                     }}
-                                    title={`Corte: ${fmt(region.start)} – ${fmt(region.end)}. Selecciona y pulsa Suprimir para eliminar.`}
+                                    title={isCut
+                                        ? `Segmento eliminado: ${fmt(start)}–${fmt(end)}. Selecciona y pulsa Supr para restaurar.`
+                                        : `Segmento: ${fmt(start)}–${fmt(end)}. Selecciona y pulsa Supr para eliminar.`
+                                    }
                                 >
-                                    {/* Scissors icon on wider cuts */}
-                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                        <span className="text-red-300 text-[10px] opacity-75 select-none">✂</span>
-                                    </div>
+                                    {/* Label on selected */}
                                     {isSelected && (
-                                        <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-red-700 text-white text-[8px] px-1 py-0.5 rounded whitespace-nowrap z-30 pointer-events-none">
-                                            {fmt(region.start)}–{fmt(region.end)} · Supr para borrar
+                                        <div className="absolute -top-5 left-1/2 -translate-x-1/2 px-1 py-0.5 rounded text-[8px] whitespace-nowrap z-30 pointer-events-none text-white"
+                                            style={{ background: isCut ? '#b91c1c' : '#1d4ed8' }}
+                                        >
+                                            {isCut ? '✂ Supr para restaurar' : 'Supr para eliminar'}
+                                        </div>
+                                    )}
+                                    {/* Scissors icon for cut segments */}
+                                    {isCut && (
+                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                            <span className="text-red-300 text-[10px] opacity-75 select-none">✂</span>
                                         </div>
                                     )}
                                 </div>
                             );
                         })}
 
-                        {/* Active selection overlay (in-progress drag) */}
-                        {editMode && selectionOverlay && (
+                        {/* Split-point lines */}
+                        {editMode && duration > 0 && splitPoints.map((pt, i) => (
                             <div
-                                className="absolute top-0 bottom-0 z-25 bg-blue-500/30 border border-blue-400/70 pointer-events-none"
-                                style={{ left: selectionOverlay.left, width: selectionOverlay.width }}
+                                key={`split-${i}`}
+                                className="absolute top-0 bottom-0 z-25 w-0.5 bg-yellow-400/90 pointer-events-none"
+                                style={{ left: `${(pt / duration) * 100}%` }}
+                                title={`Punto de corte: ${fmt(pt)}`}
                             />
-                        )}
+                        ))}
 
                         {/* Playhead Cursor */}
                         <div
@@ -421,6 +485,10 @@ const EditorContent: React.FC = () => {
                             <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">
                                 No Video
                             </div>
+                        )}
+                        {/* Black overlay during cut gaps */}
+                        {isInCutRegion && (
+                            <div className="absolute inset-0 bg-black z-20 pointer-events-none" />
                         )}
                         <div className="absolute top-1 right-1 bg-black/60 px-1 py-0.5 rounded text-[8px] text-gray-400">Preview</div>
 

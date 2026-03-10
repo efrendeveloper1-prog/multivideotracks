@@ -4,7 +4,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
-    const { tracks } = useAudioEngine();
+    const { tracks, isInCutRegion } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
@@ -74,7 +74,7 @@ export const SecondScreen: React.FC = () => {
             if (secondWindow?.closed) return;
 
             const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-            if (videoEl && !isBlackout) {
+            if (videoEl && !isBlackout && !isInCutRegion) {
                 channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: videoEl.currentTime,
@@ -92,7 +92,7 @@ export const SecondScreen: React.FC = () => {
         }, 500);
 
         return () => clearInterval(syncInterval);
-    }, [isActive, secondWindow, isBlackout]);
+    }, [isActive, secondWindow, isBlackout, isInCutRegion]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {
