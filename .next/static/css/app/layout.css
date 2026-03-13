@@ -559,6 +559,10 @@ video {
 .inset-0 {
   inset: 0px;
 }
+.inset-y-0 {
+  top: 0px;
+  bottom: 0px;
+}
 .-top-5 {
   top: -1.25rem;
 }
@@ -615,6 +619,9 @@ video {
 }
 .z-30 {
   z-index: 30;
+}
+.z-40 {
+  z-index: 40;
 }
 .m-4 {
   margin: 1rem;
@@ -802,6 +809,9 @@ video {
 .w-full {
   width: 100%;
 }
+.w-px {
+  width: 1px;
+}
 .w-screen {
   width: 100vw;
 }
@@ -857,6 +867,9 @@ video {
 }
 .cursor-crosshair {
   cursor: crosshair;
+}
+.cursor-ew-resize {
+  cursor: ew-resize;
 }
 .cursor-none {
   cursor: none;
@@ -1234,12 +1247,19 @@ video {
   --tw-bg-opacity: 1;
   background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
 }
+.bg-yellow-400 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(250 204 21 / var(--tw-bg-opacity, 1));
+}
 .bg-yellow-400\/90 {
   background-color: rgb(250 204 21 / 0.9);
 }
 .bg-yellow-500 {
   --tw-bg-opacity: 1;
   background-color: rgb(234 179 8 / var(--tw-bg-opacity, 1));
+}
+.bg-yellow-600\/50 {
+  background-color: rgb(202 138 4 / 0.5);
 }
 .bg-zinc-950 {
   --tw-bg-opacity: 1;
@@ -1761,6 +1781,13 @@ video {
 .active\:bg-gray-800:active {
   --tw-bg-opacity: 1;
   background-color: rgb(31 41 55 / var(--tw-bg-opacity, 1));
+}
+.group:hover .group-hover\:w-2 {
+  width: 0.5rem;
+}
+.group:hover .group-hover\:bg-yellow-400 {
+  --tw-bg-opacity: 1;
+  background-color: rgb(250 204 21 / var(--tw-bg-opacity, 1));
 }
 .group:hover .group-hover\:opacity-100 {
   opacity: 1;

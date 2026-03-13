@@ -14,7 +14,8 @@ const EditorContent: React.FC = () => {
     const {
         setVideoElement, tracks, currentTime, duration, seek,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
-        cutRegions, addCutRegion, removeCutRegion, revertVideo, isInCutRegion
+        cutRegions, setCutRegions, splitPoints, setSplitPoints,
+        addCutRegion, removeCutRegion, revertVideo, isInCutRegion
     } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -24,10 +25,9 @@ const EditorContent: React.FC = () => {
 
     // Edit mode state
     const [editMode, setEditMode] = useState(false);
-    // Split points: sorted array of timestamps (seconds) that divide the timeline into segments
-    const [splitPoints, setSplitPoints] = useState<number[]>([]);
     // Which segment is currently selected (index into the array of gaps between boundaries)
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
+    const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -99,6 +99,51 @@ const EditorContent: React.FC = () => {
             r => r.start <= start + 0.05 && r.end >= end - 0.05
         );
     }, [segmentBoundaries, cutRegions]);
+
+    // Handle dragging split points (edges of clips)
+    useEffect(() => {
+        if (draggingBoundary === null) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!timelineRef.current || duration <= 0) return;
+            const rect = timelineRef.current.getBoundingClientRect();
+            const deltaX = e.clientX - draggingBoundary.startX;
+            const deltaTime = (deltaX / rect.width) * duration;
+            
+            let newTime = draggingBoundary.initialTime + deltaTime;
+            
+            setSplitPoints(prev => {
+                const minTime = draggingBoundary.index === 0 ? 0 : prev[draggingBoundary.index - 1] + 0.1;
+                const maxTime = draggingBoundary.index === prev.length - 1 ? duration : prev[draggingBoundary.index + 1] - 0.1;
+                newTime = Math.max(minTime, Math.min(newTime, maxTime));
+
+                const arr = [...prev];
+                arr[draggingBoundary.index] = newTime;
+                return arr.sort((a,b) => a-b);
+            });
+
+            // Reconstruct new cut regions from initial ones safely
+            const updatedCuts = draggingBoundary.initialCutRegions.map(cr => {
+                let ns = cr.start;
+                let ne = cr.end;
+                if (Math.abs(ns - draggingBoundary.initialTime) < 0.05) ns = newTime;
+                if (Math.abs(ne - draggingBoundary.initialTime) < 0.05) ne = newTime;
+                return { start: Math.min(ns, ne), end: Math.max(ns, ne) };
+            });
+            setCutRegions(updatedCuts);
+        };
+
+        const handleMouseUp = () => {
+            setDraggingBoundary(null);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [draggingBoundary, duration, setCutRegions]);
 
     // --- Keyboard handler ---
     useEffect(() => {
@@ -236,18 +281,39 @@ const EditorContent: React.FC = () => {
                 <div className="flex items-center gap-1 sm:gap-2">
                     {/* Revert button — only visible in edit mode */}
                     {editMode && hasVideo && (
-                        <button
-                            onClick={() => {
-                                revertVideo();
-                                setSplitPoints([]);
-                                setSelectedSegmentIndex(null);
-                            }}
-                            title="Volver al original (borrar todos los cortes)"
-                            className="flex items-center gap-1 bg-amber-700 hover:bg-amber-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-white transition-colors"
-                        >
-                            <span>↺</span>
-                            <span className="hidden sm:inline">Revert</span>
-                        </button>
+                        <>
+                            <button
+                                onClick={() => {
+                                    if (duration <= 0) return;
+                                    const t = currentTime;
+                                    setSplitPoints(prev => {
+                                        const tooClose = prev.some(p => Math.abs(p - t) < 0.15) || t < 0.15 || t > duration - 0.15;
+                                        if (tooClose) return prev;
+                                        return [...prev, t].sort((a, b) => a - b);
+                                    });
+                                    setSelectedSegmentIndex(null);
+                                }}
+                                title="Dividir en Playhead (S)"
+                                className="flex items-center gap-1 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-white transition-colors"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M10 4H7v16h3V4zm7 0h-3v16h3V4z"/>
+                                    <path d="M4 12l4-4v8zM20 12l-4-4v8z"/>
+                                </svg>
+                                <span className="hidden sm:inline">Split</span>
+                            </button>
+                            <button
+                                onClick={() => {
+                                    revertVideo();
+                                    setSelectedSegmentIndex(null);
+                                }}
+                                title="Volver al original (borrar todos los cortes)"
+                                className="flex items-center gap-1 bg-amber-700 hover:bg-amber-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-white transition-colors"
+                            >
+                                <span>↺</span>
+                                <span className="hidden sm:inline">Revert</span>
+                            </button>
+                        </>
                     )}
                     {/* EDIT button */}
                     <button
@@ -255,7 +321,6 @@ const EditorContent: React.FC = () => {
                             if (!hasVideo) return;
                             setEditMode(prev => !prev);
                             setSelectedSegmentIndex(null);
-                            setSplitPoints([]);
                         }}
                         disabled={!hasVideo}
                         title={hasVideo ? (editMode ? 'Salir del modo edición' : 'Entrar en modo edición') : 'Carga un video para editar'}
@@ -448,14 +513,33 @@ const EditorContent: React.FC = () => {
                             );
                         })}
 
-                        {/* Split-point lines */}
+                        {/* Split-point lines (draggable handles) */}
                         {editMode && duration > 0 && splitPoints.map((pt, i) => (
                             <div
                                 key={`split-${i}`}
-                                className="absolute top-0 bottom-0 z-25 w-0.5 bg-yellow-400/90 pointer-events-none"
-                                style={{ left: `${(pt / duration) * 100}%` }}
-                                title={`Punto de corte: ${fmt(pt)}`}
-                            />
+                                className="absolute top-0 bottom-0 z-40 flex items-center justify-center cursor-ew-resize group"
+                                style={{ left: `calc(${(pt / duration) * 100}% - 8px)`, width: '16px' }}
+                                title={`Arrastra para ajustar: ${fmt(pt)}`}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    setDraggingBoundary({
+                                        index: i,
+                                        startX: e.clientX,
+                                        initialTime: splitPoints[i],
+                                        initialCutRegions: cutRegions
+                                    });
+                                }}
+                            >
+                                {/* Visual line: thick on hover, thin normally */}
+                                <div className={`h-full transition-all duration-100 ${
+                                    draggingBoundary?.index === i 
+                                        ? 'w-2 bg-yellow-400' 
+                                        : 'w-0.5 bg-yellow-400/90 group-hover:w-2 group-hover:bg-yellow-400'
+                                }`} />
+                                
+                                {/* Inner line for styling akin to drag handles */}
+                                <div className="absolute inset-y-0 w-px bg-yellow-600/50 pointer-events-none" />
+                            </div>
                         ))}
 
                         {/* Playhead Cursor */}
