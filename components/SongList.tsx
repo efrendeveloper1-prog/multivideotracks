@@ -103,6 +103,76 @@ export const SongList: React.FC = () => {
         event.target.value = '';
     }, [addSongToPlaylist, updateSongInPlaylist, playlist, addTrack, addVideoTrack, prepareSongCache, loadPreparedSong]);
 
+    const handleAutoLocate = useCallback(async () => {
+        try {
+            const dirHandle = await (window as any).showDirectoryPicker({
+                mode: 'read'
+            });
+            setIsUploading(true);
+            setUploadMessage('Analizando directorio...');
+
+            const filesToProcess: File[] = [];
+            for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file' && entry.name.match(/\.(zip)$/i)) {
+                    filesToProcess.push(await entry.getFile());
+                }
+            }
+
+            const missingSongs = playlist.filter(s => s.isPlaceholder);
+            let processedCount = 0;
+
+            for (const missingSong of missingSongs) {
+                const matchingZip = filesToProcess.find(f => f.name.toLowerCase() === `${missingSong.title.toLowerCase()}.zip`);
+                if (matchingZip) {
+                    setUploadMessage(`Extrayendo ${matchingZip.name}...`);
+                    const zip = new JSZip();
+                    const contents = await zip.loadAsync(matchingZip);
+                    
+                    const stemFiles: File[] = [];
+                    let videoFile: File | undefined;
+                    const promises: Promise<void>[] = [];
+
+                    contents.forEach((relativePath, fileEntry) => {
+                        if (fileEntry.dir) return;
+                        if (relativePath.match(/\.(wav|mp3)$/i)) {
+                            promises.push(
+                                fileEntry.async('blob').then(blob => {
+                                    stemFiles.push(new File([blob], relativePath.split('/').pop() || 'track', { type: blob.type || 'audio/mpeg' }));
+                                })
+                            );
+                        } else if (relativePath.match(/\.(mp4|mov|webm|avi)$/i)) {
+                            promises.push(
+                                fileEntry.async('blob').then(blob => {
+                                    videoFile = new File([blob], relativePath.split('/').pop() || 'video', { type: blob.type || 'video/mp4' });
+                                })
+                            );
+                        }
+                    });
+
+                    await Promise.all(promises);
+
+                    setUploadMessage(`Decodificando ${missingSong.title}...`);
+                    let updatedSong: Song = { ...missingSong, stemFiles, videoFile };
+                    updatedSong = await prepareSongCache(updatedSong, missingSong);
+                    updateSongInPlaylist(updatedSong.id, updatedSong);
+                    processedCount++;
+                }
+            }
+
+            if (processedCount > 0) {
+                setUploadMessage(`¡Se cargaron ${processedCount} canciones exitosamente!`);
+            } else {
+                setUploadMessage('No se encontraron archivos ZIP que coincidan con la playlist.');
+            }
+            setTimeout(() => setIsUploading(false), 2500);
+
+        } catch (error) {
+            // User aborted or unsupported API
+            console.error(error);
+            setIsUploading(false);
+        }
+    }, [playlist, prepareSongCache, updateSongInPlaylist]);
+
     // Handle importing preset
     const handleImportPreset = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -193,6 +263,24 @@ export const SongList: React.FC = () => {
                     {loadingProgress !== null && (
                         <span className="text-[10px] font-bold text-green-400">{loadingProgress}%</span>
                     )}
+                </div>
+            )}
+
+            {/* Error Banner for Missing Tracks */}
+            {playlist.some(s => s.isPlaceholder) && !isUploading && (
+                <div className="bg-orange-900/60 border-b border-orange-700/50 p-2 flex flex-col sm:flex-row items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-2 text-orange-300 text-[10px] sm:text-xs">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 shrink-0">
+                            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                        </svg>
+                        <span>Faltan archivos de audio/video.</span>
+                    </div>
+                    <button
+                        onClick={handleAutoLocate}
+                        className="bg-orange-600 hover:bg-orange-500 text-white px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors whitespace-nowrap shadow-sm shadow-orange-900/50"
+                    >
+                        Auto-Localizar Carpeta
+                    </button>
                 </div>
             )}
 
