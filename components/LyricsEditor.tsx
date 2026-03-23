@@ -122,11 +122,26 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                         onChange={e => setLyricsSettings({...lyricsSettings, fontFamily: e.target.value})}
                                         title="Fuente"
                                     >
+                                        <option value="Montserrat, sans-serif">Montserrat</option>
+                                        <option value="'Montserrat', sans-serif">Montserrat Bold</option>
+                                        <option value="Bebas Neue, sans-serif">Bebas Neue</option>
+                                        <option value="Gotham, Montserrat, sans-serif">Gotham</option>
+                                        <option value="Poppins, sans-serif">Poppins</option>
+                                        <option value="'League Spartan', sans-serif">League Spartan</option>
                                         <option value="Inter, sans-serif">Inter</option>
-                                        <option value="Arial, sans-serif">Arial</option>
-                                        <option value="'Times New Roman', serif">Times New Roman</option>
-                                        <option value="'Courier New', monospace">Courier</option>
                                         <option value="system-ui, sans-serif">System UI</option>
+                                    </select>
+
+                                    <select 
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-1 py-0.5 sm:py-1 outline-none font-medium ml-1"
+                                        value={lyricsSettings.animation}
+                                        onChange={e => setLyricsSettings({...lyricsSettings, animation: e.target.value as any})}
+                                        title="Animación de Entrada"
+                                    >
+                                        <option value="none">Sin Animación</option>
+                                        <option value="blur-in">Blur Moderno</option>
+                                        <option value="slide-up">Deslizamiento</option>
+                                        <option value="zoom-in">Zoom In</option>
                                     </select>
                                 </div>
                                 <div className="flex gap-2">

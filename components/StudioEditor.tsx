@@ -618,9 +618,12 @@ const EditorContent: React.FC = () => {
                                   lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
                                   'bottom-6 sm:bottom-8 justify-end'}`}
                             >
-                                <div className={`w-full max-w-full space-y-0.5
+                                <div 
+                                    key={activeLyricText}
+                                    className={`w-full max-w-full space-y-0.5
                                     ${lyricsSettings.align === 'left' ? 'text-left' :
-                                      lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}`}
+                                      lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}
+                                    ${lyricsSettings.animation !== 'none' ? `animate-${lyricsSettings.animation}` : ''}`}
                                 >
                                     {activeLyricText.split('\n').map((line, i) => (
                                         <p 

@@ -7,6 +7,7 @@ interface LyricsSettings {
     position: 'top' | 'middle' | 'bottom';
     fontSize: number;
     fontFamily: string;
+    animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in';
 }
 
 function PresentationContent() {
@@ -88,9 +89,12 @@ function PresentationContent() {
                       lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
                       'bottom-[10vh] justify-end'}`}
                 >
-                    <div className={`w-full max-w-6xl space-y-1 sm:space-y-2 md:space-y-4 mx-auto
+                    <div 
+                        key={currentLyric}
+                        className={`w-full max-w-6xl space-y-1 sm:space-y-2 md:space-y-4 mx-auto
                         ${lyricsSettings.align === 'left' ? 'text-left' :
-                          lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}`}
+                          lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}
+                        ${lyricsSettings.animation !== 'none' ? `animate-${lyricsSettings.animation}` : ''}`}
                     >
                         {currentLyric.split('\n').map((line, i) => (
                             <p 

@@ -19,13 +19,15 @@ export interface LyricsSettings {
     position: 'top' | 'middle' | 'bottom';
     fontSize: number;
     fontFamily: string;
+    animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in';
 }
 
 export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = {
     align: 'center',
     position: 'bottom',
     fontSize: 60,
-    fontFamily: 'Inter, sans-serif'
+    fontFamily: 'Montserrat, sans-serif',
+    animation: 'blur-in'
 };
 
 export interface Track {
