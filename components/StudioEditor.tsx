@@ -623,7 +623,9 @@ const EditorContent: React.FC = () => {
                                     className={`w-full max-w-full space-y-0.5
                                     ${lyricsSettings.align === 'left' ? 'text-left' :
                                       lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}
-                                    ${lyricsSettings.animation !== 'none' ? `animate-${lyricsSettings.animation}` : ''}`}
+                                    ${lyricsSettings.animation === 'blur-in' ? 'animate-blur-in' : ''}
+                                    ${lyricsSettings.animation === 'slide-up' ? 'animate-slide-up' : ''}
+                                    ${lyricsSettings.animation === 'zoom-in' ? 'animate-zoom-in' : ''}`}
                                 >
                                     {activeLyricText.split('\n').map((line, i) => (
                                         <p 

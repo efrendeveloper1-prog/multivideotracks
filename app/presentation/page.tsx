@@ -94,7 +94,9 @@ function PresentationContent() {
                         className={`w-full max-w-6xl space-y-1 sm:space-y-2 md:space-y-4 mx-auto
                         ${lyricsSettings.align === 'left' ? 'text-left' :
                           lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}
-                        ${lyricsSettings.animation !== 'none' ? `animate-${lyricsSettings.animation}` : ''}`}
+                        ${lyricsSettings.animation === 'blur-in' ? 'animate-blur-in' : ''}
+                        ${lyricsSettings.animation === 'slide-up' ? 'animate-slide-up' : ''}
+                        ${lyricsSettings.animation === 'zoom-in' ? 'animate-zoom-in' : ''}`}
                     >
                         {currentLyric.split('\n').map((line, i) => (
                             <p 

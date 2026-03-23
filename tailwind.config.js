@@ -5,6 +5,11 @@ module.exports = {
         './components/**/*.{js,ts,jsx,tsx,mdx}',
         './app/**/*.{js,ts,jsx,tsx,mdx}',
     ],
+    safelist: [
+        'animate-blur-in',
+        'animate-slide-up',
+        'animate-zoom-in'
+    ],
     theme: {
         extend: {
             keyframes: {
