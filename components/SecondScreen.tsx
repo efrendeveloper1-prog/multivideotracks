@@ -4,12 +4,19 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
-    const { tracks, isInCutRegion } = useAudioEngine();
+    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
     const isActive = !!secondWindow && !secondWindow.closed;
 
+    const lyricsRef = useRef(lyrics);
+    const currentTimeRef = useRef(currentTime);
+    const lyricsSettingsRef = useRef(lyricsSettings);
+
+    useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
+    useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+    useEffect(() => { lyricsSettingsRef.current = lyricsSettings; }, [lyricsSettings]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -22,8 +29,8 @@ export const SecondScreen: React.FC = () => {
         }
 
         const videoTrackExists = tracks.some(t => t.name === "VIDEO TRACK");
-        if (!videoTrackExists) {
-            alert('No hay video cargado para mostrar en segunda pantalla');
+        if (!videoTrackExists && lyrics.length === 0) {
+            alert('No hay video ni letras cargadas para mostrar en segunda pantalla');
             return;
         }
 
@@ -73,23 +80,39 @@ export const SecondScreen: React.FC = () => {
         const syncInterval = setInterval(() => {
             if (secondWindow?.closed) return;
 
+            const t = currentTimeRef.current;
+            const mostRecentBlock = lyricsRef.current
+                .filter(l => l.startTime !== null && l.startTime <= t)
+                .sort((a, b) => b.startTime! - a.startTime!)[0];
+                
+            let activeLyricBlock = mostRecentBlock;
+            if (activeLyricBlock && activeLyricBlock.endTime && activeLyricBlock.endTime < t) {
+                activeLyricBlock = undefined as any; // Cast to bypass strict checks if needed, or just let it become falsy
+            }
+                
+            const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
+
             const videoEl = document.querySelector('video') as HTMLVideoElement | null;
             if (videoEl && !isBlackout && !isInCutRegion) {
                 channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: videoEl.currentTime,
                     playing: !videoEl.paused,
-                    src: videoEl.src
+                    src: videoEl.src,
+                    currentLyric: activeLyricText,
+                    lyricsSettings: lyricsSettingsRef.current
                 });
             } else {
                 channelRef.current!.postMessage({
                     type: 'sync',
                     currentTime: 0,
                     playing: false,
-                    src: null
+                    src: null,
+                    currentLyric: isBlackout || isInCutRegion ? null : activeLyricText,
+                    lyricsSettings: lyricsSettingsRef.current
                 });
             }
-        }, 500);
+        }, 300); // 300ms is good for lyric sync
 
         return () => clearInterval(syncInterval);
     }, [isActive, secondWindow, isBlackout, isInCutRegion]);

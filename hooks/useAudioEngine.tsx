@@ -7,6 +7,27 @@ export interface CutRegion {
     end: number;   // seconds
 }
 
+export interface LyricBlock {
+    id: string;
+    text: string;
+    startTime: number | null; // seconds, null if not mapped yet
+    endTime?: number | null; // seconds, null if unbounded
+}
+
+export interface LyricsSettings {
+    align: 'left' | 'center' | 'right';
+    position: 'top' | 'middle' | 'bottom';
+    fontSize: number;
+    fontFamily: string;
+}
+
+export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = {
+    align: 'center',
+    position: 'bottom',
+    fontSize: 60,
+    fontFamily: 'Inter, sans-serif'
+};
+
 export interface Track {
     id: string;
     name: string;
@@ -34,6 +55,8 @@ export interface Song {
     cachedVideoOffset?: number;
     cachedCutRegions?: CutRegion[];
     cachedSplitPoints?: number[];
+    cachedLyrics?: LyricBlock[];
+    cachedLyricsSettings?: LyricsSettings;
     isPlaceholder?: boolean;
     analysis?: AudioAnalysis | null;
 }
@@ -69,6 +92,15 @@ interface AudioEngineContextType {
     removeCutRegion: (index: number) => void;
     revertVideo: () => void;
     isInCutRegion: boolean; // true when playhead is inside a cut region (gap mode)
+    // Lyrics
+    lyrics: LyricBlock[];
+    setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>;
+    addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void;
+    updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void;
+    removeLyricBlock: (id: string) => void;
+    clearLyrics: () => void;
+    lyricsSettings: LyricsSettings;
+    setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>;
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -109,6 +141,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
     const [splitPoints, setSplitPoints] = useState<number[]>([]);
     const [isInCutRegion, setIsInCutRegion] = useState(false);
+    const [lyrics, setLyrics] = useState<LyricBlock[]>([]);
+    const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
@@ -131,6 +165,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const cutRegionsRef = useRef<CutRegion[]>([]);
     const splitPointsRef = useRef<number[]>([]);
     const isInCutRegionRef = useRef<boolean>(false);
+    const lyricsRef = useRef<LyricBlock[]>([]);
+    const lyricsSettingsRef = useRef<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
@@ -169,6 +205,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
     useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
     useEffect(() => { splitPointsRef.current = splitPoints; }, [splitPoints]);
+    useEffect(() => { lyricsRef.current = lyrics;    }, [lyrics]);
+
+    useEffect(() => {
+        lyricsSettingsRef.current = lyricsSettings;
+    }, [lyricsSettings]);
+
     useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
     useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
     useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
@@ -345,6 +387,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setVideoDuration(0);
         setCurrentTime(0);
         setSongAnalysis(null);
+        setLyrics([]);
         pauseTimeRef.current = 0;
         setIsPlaying(false);
     }, []);
@@ -671,6 +714,23 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setSplitPoints([]);
     }, []);
 
+    // Lyrics management
+    const addLyricBlock = useCallback((block: Omit<LyricBlock, 'id'>) => {
+        setLyrics(prev => [...prev, { ...block, id: crypto.randomUUID() }]);
+    }, []);
+
+    const updateLyricBlock = useCallback((id: string, updates: Partial<LyricBlock>) => {
+        setLyrics(prev => prev.map(lb => lb.id === id ? { ...lb, ...updates } : lb));
+    }, []);
+
+    const removeLyricBlock = useCallback((id: string) => {
+        setLyrics(prev => prev.filter(lb => lb.id !== id));
+    }, []);
+
+    const clearLyrics = useCallback(() => {
+        setLyrics([]);
+    }, []);
+
     // Playlist management
     const prepareSongCache = useCallback(async (song: Song, placeholderSettings?: Song): Promise<Song> => {
         if (!audioContextRef.current) return song;
@@ -790,6 +850,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
             cachedCutRegions: placeholderSettings?.cachedCutRegions || song.cachedCutRegions || [],
             cachedSplitPoints: placeholderSettings?.cachedSplitPoints || song.cachedSplitPoints || [],
+            cachedLyrics: placeholderSettings?.cachedLyrics || song.cachedLyrics || [],
             isPlaceholder: false,
             analysis: newAnalysis
         };
@@ -819,6 +880,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedVideoOffset: videoOffsetRef.current,
                         cachedCutRegions: cutRegionsRef.current,
                         cachedSplitPoints: splitPointsRef.current,
+                        cachedLyrics: lyricsRef.current,
+                        cachedLyricsSettings: lyricsSettingsRef.current,
                         analysis: songAnalysisRef.current
                     };
                 }
@@ -850,6 +913,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoOffset(song.cachedVideoOffset || 0);
             setCutRegions(song.cachedCutRegions || []);
             setSplitPoints(song.cachedSplitPoints || []);
+            setLyrics(song.cachedLyrics || []);
+            setLyricsSettings(song.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS);
             setSongAnalysis(song.analysis || null);
         } else {
             // Fresh load
@@ -859,6 +924,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoOffset(0);
             setCutRegions([]);
             setSplitPoints([]);
+            setLyrics([]);
+            setLyricsSettings(DEFAULT_LYRICS_SETTINGS);
             setSongAnalysis(null);
 
             let loadedItems = 0;
@@ -898,6 +965,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setVideoOffset(song.cachedVideoOffset || 0);
         setCutRegions(song.cachedCutRegions || []);
         setSplitPoints(song.cachedSplitPoints || []);
+        setLyrics(song.cachedLyrics || []);
+        setLyricsSettings(song.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS);
         setSongAnalysis(song.analysis || null);
     }, [updateActiveSongCache]);
 
@@ -913,6 +982,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     cachedVideoOffset: videoOffsetRef.current,
                     cachedCutRegions: cutRegionsRef.current,
                     cachedSplitPoints: splitPointsRef.current,
+                    cachedLyrics: lyricsRef.current,
+                    cachedLyricsSettings: lyricsSettingsRef.current,
                     analysis: songAnalysisRef.current
                 };
             }
@@ -933,6 +1004,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedVideoOffset: song.cachedVideoOffset,
                 cachedCutRegions: song.cachedCutRegions,
                 cachedSplitPoints: song.cachedSplitPoints,
+                cachedLyrics: song.cachedLyrics,
+                cachedLyricsSettings: song.cachedLyricsSettings,
                 tracks: (song.cachedTracks || []).map(t => ({
                     name: t.name,
                     volume: t.volume,
@@ -977,6 +1050,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedVideoOffset: pSong.cachedVideoOffset,
                 cachedCutRegions: pSong.cachedCutRegions,
                 cachedSplitPoints: pSong.cachedSplitPoints,
+                cachedLyrics: pSong.cachedLyrics || [],
+                cachedLyricsSettings: pSong.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS,
                 isPlaceholder: true,
                 cachedTracks: pSong.tracks.map((t: any) => ({
                     id: crypto.randomUUID(),
@@ -998,6 +1073,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoOffset(0);
             setCutRegions([]);
             setSplitPoints([]);
+            setLyrics([]);
+            setLyricsSettings(DEFAULT_LYRICS_SETTINGS);
             setCurrentTime(0);
             pauseTimeRef.current = 0;
             setIsPlaying(false);
@@ -1090,6 +1167,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             removeCutRegion,
             revertVideo,
             isInCutRegion,
+            lyrics,
+            setLyrics,
+            addLyricBlock,
+            updateLyricBlock,
+            removeLyricBlock,
+            clearLyrics,
+            lyricsSettings,
+            setLyricsSettings,
             loadingProgress,
             getMasterLevels,
             getTrackLevel

@@ -9,10 +9,12 @@ import { SongList } from './SongList';
 import { AudioEngineProvider, useAudioEngine } from '@/hooks/useAudioEngine';
 import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
+import { LyricsEditor } from './LyricsEditor';
+import { LyricsTimelineTrack } from './LyricsTimelineTrack';
 
 const EditorContent: React.FC = () => {
     const {
-        setVideoElement, tracks, currentTime, duration, seek,
+        setVideoElement, tracks, currentTime, duration, seek, lyrics, lyricsSettings,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion
@@ -29,6 +31,20 @@ const EditorContent: React.FC = () => {
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
+    const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+    const [showLyricsPreview, setShowLyricsPreview] = useState(true);
+
+    const activeLyricBlock = useMemo(() => {
+        const mostRecentBlock = lyrics
+            .filter(l => l.startTime !== null && l.startTime <= currentTime)
+            .sort((a, b) => b.startTime! - a.startTime!)[0];
+            
+        if (mostRecentBlock && mostRecentBlock.endTime && mostRecentBlock.endTime < currentTime) {
+            return undefined;
+        }
+        return mostRecentBlock;
+    }, [lyrics, currentTime]);
+    const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
 
     useEffect(() => {
         if (videoRef.current) {
@@ -272,6 +288,12 @@ const EditorContent: React.FC = () => {
                 <div className="flex items-center gap-1 sm:gap-3">
                     <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">SETLIST</button>
                     <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">MIDI</button>
+                    <button 
+                        onClick={() => setShowLyricsEditor(true)}
+                        className={`${showLyricsEditor ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors`}
+                    >
+                        LYRICS
+                    </button>
                 </div>
 
                 <div className="bg-gray-800 px-3 py-0.5 rounded text-green-500 font-mono font-bold text-xs sm:text-sm">
@@ -380,6 +402,9 @@ const EditorContent: React.FC = () => {
                                 </button>
                             </div>
                         )}
+
+                        {/* Lyrics Track */}
+                        <LyricsTimelineTrack />
 
                         {/* Video Tracks Container */}
                         {videoTrack && (
@@ -574,7 +599,46 @@ const EditorContent: React.FC = () => {
                         {isInCutRegion && (
                             <div className="absolute inset-0 bg-black z-20 pointer-events-none" />
                         )}
-                        <div className="absolute top-1 right-1 bg-black/60 px-1 py-0.5 rounded text-[8px] text-gray-400">Preview</div>
+                        
+                        <div className="absolute top-1 right-1 flex gap-1 z-30">
+                            <button 
+                                onClick={() => setShowLyricsPreview(!showLyricsPreview)}
+                                className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${showLyricsPreview ? 'bg-blue-600 text-white border border-blue-500' : 'bg-gray-800 text-gray-400 border border-gray-700'} transition-colors`}
+                                title="Mostrar/Ocultar Letras en Preview"
+                            >
+                                TXT
+                            </button>
+                            <div className="bg-black/60 px-1.5 py-0.5 rounded text-[8px] text-gray-400 border border-gray-800">Preview</div>
+                        </div>
+
+                        {/* Lyrics Preview Overlay */}
+                        {showLyricsPreview && activeLyricText && (
+                            <div className={`absolute inset-x-0 flex flex-col z-20 pointer-events-none px-2
+                                ${lyricsSettings.position === 'top' ? 'top-6 sm:top-8 justify-start' : 
+                                  lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
+                                  'bottom-6 sm:bottom-8 justify-end'}`}
+                            >
+                                <div className={`w-full max-w-full space-y-0.5
+                                    ${lyricsSettings.align === 'left' ? 'text-left' :
+                                      lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}`}
+                                >
+                                    {activeLyricText.split('\n').map((line, i) => (
+                                        <p 
+                                            key={i} 
+                                            className="text-white font-bold tracking-tight block px-1"
+                                            style={{
+                                                textShadow: '0px 1px 4px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
+                                                lineHeight: '1.2',
+                                                fontFamily: lyricsSettings.fontFamily,
+                                                fontSize: `${Math.max(10, lyricsSettings.fontSize * 0.25)}px`
+                                            }}
+                                        >
+                                            {line}
+                                        </p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Audio Meter Overlay */}
                         <div className="absolute top-1 left-2 bottom-1 z-10 flex flex-col items-center justify-end pb-1 pointer-events-none opacity-80">
@@ -601,6 +665,9 @@ const EditorContent: React.FC = () => {
             <div className="h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
                 <TransportControls />
             </div>
+
+            {/* Modals */}
+            {showLyricsEditor && <LyricsEditor onClose={() => setShowLyricsEditor(false)} />}
         </div>
     );
 };

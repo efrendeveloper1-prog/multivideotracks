@@ -1,10 +1,19 @@
 'use client';
 
-import { useEffect, useRef, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
+
+interface LyricsSettings {
+    align: 'left' | 'center' | 'right';
+    position: 'top' | 'middle' | 'bottom';
+    fontSize: number;
+    fontFamily: string;
+}
 
 function PresentationContent() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const channelRef = useRef<BroadcastChannel | null>(null);
+    const [currentLyric, setCurrentLyric] = useState<string | null>(null);
+    const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings | null>(null);
 
     useEffect(() => {
         const channel = new BroadcastChannel('second-screen-video');
@@ -39,6 +48,13 @@ function PresentationContent() {
                 } else if (!event.data.playing && !video.paused) {
                     video.pause();
                 }
+
+                if (event.data.currentLyric !== undefined) {
+                    setCurrentLyric(event.data.currentLyric);
+                }
+                if (event.data.lyricsSettings !== undefined) {
+                    setLyricsSettings(event.data.lyricsSettings);
+                }
             }
         };
 
@@ -64,6 +80,35 @@ function PresentationContent() {
                 playsInline
                 muted
             />
+
+            {/* Lyrics Overlay */}
+            {currentLyric && lyricsSettings && (
+                <div className={`absolute inset-x-0 flex flex-col z-50 pointer-events-none px-4 md:px-12
+                    ${lyricsSettings.position === 'top' ? 'top-[10vh] justify-start' : 
+                      lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
+                      'bottom-[10vh] justify-end'}`}
+                >
+                    <div className={`w-full max-w-6xl space-y-1 sm:space-y-2 md:space-y-4 mx-auto
+                        ${lyricsSettings.align === 'left' ? 'text-left' :
+                          lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}`}
+                    >
+                        {currentLyric.split('\n').map((line, i) => (
+                            <p 
+                                key={i} 
+                                className="text-white font-bold tracking-tight block"
+                                style={{
+                                    textShadow: '0px 4px 20px rgba(0,0,0,0.9), 0px 2px 8px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
+                                    lineHeight: '1.2',
+                                    fontFamily: lyricsSettings.fontFamily,
+                                    fontSize: `${Math.max(20, lyricsSettings.fontSize)}px`
+                                }}
+                            >
+                                {line}
+                            </p>
+                        ))}
+                    </div>
+                </div>
+            )}
 
         </div>
     );
