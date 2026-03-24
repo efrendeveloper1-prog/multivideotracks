@@ -22,6 +22,20 @@ export interface LyricsSettings {
     animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in';
 }
 
+export interface PanelSizes {
+    main: Record<string, number>;
+    left: Record<string, number>;
+    timeline: Record<string, number>;
+    sidebar: Record<string, number>;
+}
+
+export const DEFAULT_PANEL_SIZES: PanelSizes = {
+    main: { 'main-left': 75, 'main-right': 25 },
+    left: { 'left-top': 70, 'left-mixer': 30 },
+    timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 },
+    sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 }
+};
+
 export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = {
     align: 'center',
     position: 'bottom',
@@ -103,6 +117,12 @@ interface AudioEngineContextType {
     clearLyrics: () => void;
     lyricsSettings: LyricsSettings;
     setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>;
+    invertBackground: boolean;
+    setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>;
+    // Resizable Panels
+    panelSizes: PanelSizes;
+    setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>;
+    layoutVersion: number;
     // Playlist
     playlist: Song[];
     activeSongId: string | null;
@@ -145,10 +165,30 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isInCutRegion, setIsInCutRegion] = useState(false);
     const [lyrics, setLyrics] = useState<LyricBlock[]>([]);
     const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
+    const [invertBackground, setInvertBackground] = useState<boolean>(false);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
     const [loadingProgress, setLoadingProgress] = useState<number | null>(null);
+    const [layoutVersion, setLayoutVersion] = useState<number>(0);
+    const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('studioPanelSizes');
+            if (saved) {
+                try { 
+                    const parsed = JSON.parse(saved);
+                    // Migration: If old version was array-based, reset to defaults
+                    if (parsed.main && Array.isArray(parsed.main)) return DEFAULT_PANEL_SIZES;
+                    return parsed;
+                } catch { }
+            }
+        }
+        return DEFAULT_PANEL_SIZES;
+    });
+
+    useEffect(() => {
+        localStorage.setItem('studioPanelSizes', JSON.stringify(panelSizes));
+    }, [panelSizes]);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -171,6 +211,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const lyricsSettingsRef = useRef<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
+    const panelSizesRef = useRef<PanelSizes>(panelSizes);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
     const trackAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
 
@@ -216,6 +257,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
     useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
     useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
+    useEffect(() => { panelSizesRef.current = panelSizes; }, [panelSizes]);
 
     // Master Volume Effect
     useEffect(() => {
@@ -994,6 +1036,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         const presetData = {
             version: 1,
+            panelSizes: panelSizesRef.current,
             playlist: currentPlaylist.map(song => ({
                 id: song.id,
                 title: song.title,
@@ -1082,8 +1125,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setIsPlaying(false);
             cancelAnimationFrame(animationFrameRef.current!);
             setActiveSongId(null);
-
             setPlaylist(newPlaylist);
+
+            // Apply panel sizes if present in the preset
+            if (data.panelSizes) {
+                setPanelSizes(data.panelSizes);
+                setLayoutVersion(v => v + 1); // Force re-render of PanelGroups
+            }
         } catch (error) {
             console.error('Error importing preset', error);
             alert('Error al leer el archivo de preset.');
@@ -1177,6 +1225,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             clearLyrics,
             lyricsSettings,
             setLyricsSettings,
+            invertBackground,
+            setInvertBackground,
+            panelSizes,
+            setPanelSizes,
+            layoutVersion,
             loadingProgress,
             getMasterLevels,
             getTrackLevel

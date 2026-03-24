@@ -11,13 +11,27 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 import { LyricsEditor } from './LyricsEditor';
 import { LyricsTimelineTrack } from './LyricsTimelineTrack';
+import { Group, Panel, Separator } from 'react-resizable-panels';
+
+const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical' }> = ({ orientation }) => {
+    return (
+        <Separator
+            className={`flex items-center justify-center transition-colors bg-gray-800 hover:bg-blue-600/50 group ${
+                orientation === 'horizontal' ? 'w-1.5 cursor-col-resize z-50' : 'h-1.5 cursor-row-resize z-50'
+            }`}
+        >
+            <div className={orientation === 'horizontal' ? 'w-px h-8 bg-gray-600 group-hover:bg-blue-400' : 'h-px w-8 bg-gray-600 group-hover:bg-blue-400'} />
+        </Separator>
+    );
+};
 
 const EditorContent: React.FC = () => {
     const {
         setVideoElement, tracks, currentTime, duration, seek, lyrics, lyricsSettings,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
-        addCutRegion, removeCutRegion, revertVideo, isInCutRegion
+        addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
+        invertBackground, panelSizes, setPanelSizes, layoutVersion
     } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -45,6 +59,13 @@ const EditorContent: React.FC = () => {
         return mostRecentBlock;
     }, [lyrics, currentTime]);
     const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
+
+    const hasLyrics = lyrics.length > 0;
+    const videoTrackInfo = tracks.find(t => t.name === "VIDEO TRACK");
+    const hasVideoTrack = !!videoTrackInfo;
+    const tlPanelsCount = (hasLyrics ? 1 : 0) + (hasVideoTrack ? 1 : 0) + 1;
+    
+    const safeTlSizes = panelSizes.timeline;
 
     useEffect(() => {
         if (videoRef.current) {
@@ -362,10 +383,21 @@ const EditorContent: React.FC = () => {
             </div>
 
             {/* Main Workspace */}
-            <div className="flex-1 flex flex-col sm:flex-row overflow-hidden relative min-h-0">
-
-                {/* Left: Timeline & Mixer */}
-                <div className="flex-1 bg-gray-800/50 p-1 sm:p-2 relative z-10 flex flex-col min-w-0 min-h-0">
+            <div className="flex-1 flex overflow-hidden relative min-h-0">
+                <Group 
+                    key={`main-${layoutVersion}`} 
+                    orientation="horizontal" 
+                    onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, main: sizes }))}
+                    defaultLayout={panelSizes.main}
+                >
+                    <Panel id="main-left" minSize={20} className="flex flex-col min-w-0 min-h-0 relative z-10">
+                        <Group 
+                            key={`left-${layoutVersion}`} 
+                            orientation="vertical" 
+                            onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, left: sizes }))}
+                            defaultLayout={panelSizes.left}
+                        >
+                            <Panel id="left-top" minSize={10} className="flex flex-col min-h-0 bg-gray-800/50 p-1 sm:p-2 relative z-10 transition-colors">
 
                     {/* Edit mode instructions */}
                     {editMode && (
@@ -382,7 +414,7 @@ const EditorContent: React.FC = () => {
                     {/* Timeline Area */}
                     <div
                         ref={timelineRef}
-                        className={`bg-gray-900 mb-1 sm:mb-2 rounded border overflow-hidden flex flex-col relative shrink-0 select-none
+                        className={`bg-gray-900 mb-1 sm:mb-2 rounded border flex flex-col relative shrink-0 select-none h-full min-h-0 overflow-hidden
                             ${editMode
                                 ? 'border-blue-700 cursor-pointer'
                                 : 'border-gray-700 cursor-crosshair'
@@ -403,90 +435,108 @@ const EditorContent: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Lyrics Track */}
-                        <LyricsTimelineTrack />
+                        <Group 
+                            key={`tl-${layoutVersion}-${tlPanelsCount}`}
+                            orientation="vertical" 
+                            className="flex-1 w-full"
+                            onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, timeline: sizes }))}
+                            defaultLayout={panelSizes.timeline}
+                        >
+                            {/* Lyrics Panel */}
+                            {hasLyrics && (
+                                <>
+                                    <Panel id="tl-lyrics" minSize={10} className="relative flex flex-col shrink-0 min-h-[40px]">
+                                        <LyricsTimelineTrack />
+                                    </Panel>
+                                    <DividerHandle orientation="vertical" />
+                                </>
+                            )}
 
-                        {/* Video Tracks Container */}
-                        {videoTrack && (
-                            <div className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden"
-                                onMouseDown={(e) => {
-                                    if (editMode) return;
-                                    e.stopPropagation();
-                                    setIsDraggingOffset(true);
-                                    dragStartXRef.current = e.clientX;
-                                    dragStartOffsetRef.current = videoOffset;
-                                }}
-                                onMouseMove={(e) => {
-                                    if (editMode) return;
-                                    if (!isDraggingOffset) return;
-                                    const deltaX = e.clientX - dragStartXRef.current;
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const secondsPerPixel = duration / rect.width;
-                                    setVideoOffset(dragStartOffsetRef.current - deltaX * secondsPerPixel);
-                                }}
-                                onMouseUp={() => setIsDraggingOffset(false)}
-                                onMouseLeave={() => setIsDraggingOffset(false)}
-                                style={{ cursor: editMode ? 'pointer' : isDraggingOffset ? 'grabbing' : 'grab' }}
-                            >
-                                <div
-                                    className="flex flex-col relative w-full"
-                                    style={{
-                                        transform: duration > 0 ? `translateX(${(-videoOffset / duration) * 100}%)` : 'none',
-                                    }}
-                                >
-                                    {/* Thumbnails */}
-                                    <div className="h-14 sm:h-20 relative w-full shrink-0">
-                                        <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
-                                        <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                            VIDEO
-                                        </div>
-                                    </div>
-
-                                    {/* Extracted Audio Waveform */}
-                                    {videoAudioTrack && videoAudioTrack.buffer && (
-                                        <div className="h-14 sm:h-20 relative w-full shrink-0 border-t border-gray-800 bg-gray-950">
-                                            <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
-                                            <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                VIDEO AUDIO
+                            {/* Video Tracks Container */}
+                            {videoTrack && (
+                                <>
+                                    <Panel id="tl-video" minSize={15} 
+                                        className="relative flex flex-col shrink-0 overflow-hidden"
+                                        onMouseDown={(e) => {
+                                            if (editMode) return;
+                                            e.stopPropagation();
+                                            setIsDraggingOffset(true);
+                                            dragStartXRef.current = e.clientX;
+                                            dragStartOffsetRef.current = videoOffset;
+                                        }}
+                                        onMouseMove={(e) => {
+                                            if (editMode) return;
+                                            if (!isDraggingOffset) return;
+                                            const deltaX = e.clientX - dragStartXRef.current;
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const secondsPerPixel = duration / rect.width;
+                                            setVideoOffset(dragStartOffsetRef.current - deltaX * secondsPerPixel);
+                                        }}
+                                        onMouseUp={() => setIsDraggingOffset(false)}
+                                        onMouseLeave={() => setIsDraggingOffset(false)}
+                                        style={{ cursor: editMode ? 'pointer' : isDraggingOffset ? 'grabbing' : 'grab' }}
+                                    >
+                                        <div
+                                            className="flex flex-col relative w-full h-full"
+                                            style={{
+                                                transform: duration > 0 ? `translateX(${(-videoOffset / duration) * 100}%)` : 'none',
+                                            }}
+                                        >
+                                            <div className="flex-1 relative w-full min-h-0 shrink-0">
+                                                <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
+                                                <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                    VIDEO
+                                                </div>
                                             </div>
+
+                                            {/* Extracted Audio Waveform */}
+                                            {videoAudioTrack && videoAudioTrack.buffer && (
+                                                <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
+                                                    <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
+                                                    <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                        VIDEO AUDIO
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Offset badge */}
+                                        {videoOffset !== 0 && (
+                                            <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
+                                                {videoOffset > 0 ? '+' : ''}{videoOffset.toFixed(1)}s
+                                            </div>
+                                        )}
+                                        {/* Reset offset button */}
+                                        {videoOffset !== 0 && !editMode && (
+                                            <button
+                                                className="absolute bottom-1 right-1 z-10 bg-gray-700/80 hover:bg-gray-600 px-1 py-0.5 rounded text-[7px] text-gray-300"
+                                                onClick={(e) => { e.stopPropagation(); setVideoOffset(0); }}
+                                                title="Reset offset"
+                                            >
+                                                ↺ Reset
+                                            </button>
+                                        )}
+                                    </Panel>
+                                    <DividerHandle orientation="vertical" />
+                                </>
+                            )}
+
+                            {/* Master Waveform */}
+                            <Panel id="tl-master" minSize={15} className="relative flex flex-col shrink-0 min-h-[40px]">
+                                <div className="w-full relative h-full bg-gray-950 flex-1">
+                                    {masterBuffer ? (
+                                        <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px] sm:text-xs">
+                                            No audio loaded
                                         </div>
                                     )}
-                                </div>
-
-                                {/* Offset badge */}
-                                {videoOffset !== 0 && (
-                                    <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
-                                        {videoOffset > 0 ? '+' : ''}{videoOffset.toFixed(1)}s
+                                    <div className="absolute top-1 left-1 z-10 bg-gray-800/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-green-400 font-bold pointer-events-none">
+                                        MASTER
                                     </div>
-                                )}
-                                {/* Reset offset button */}
-                                {videoOffset !== 0 && !editMode && (
-                                    <button
-                                        className="absolute bottom-1 right-1 z-10 bg-gray-700/80 hover:bg-gray-600 px-1 py-0.5 rounded text-[7px] text-gray-300"
-                                        onClick={(e) => { e.stopPropagation(); setVideoOffset(0); }}
-                                        title="Reset offset"
-                                    >
-                                        ↺ Reset
-                                    </button>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Master Waveform */}
-                        <div className="h-20 sm:h-28 relative shrink-0">
-                            <div className="w-full relative h-full bg-gray-950">
-                                {masterBuffer ? (
-                                    <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px] sm:text-xs">
-                                        No audio loaded
-                                    </div>
-                                )}
-                                <div className="absolute top-1 left-1 z-10 bg-gray-800/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-green-400 font-bold pointer-events-none">
-                                    MASTER
                                 </div>
-                            </div>
-                        </div>
+                            </Panel>
+                        </Group>
 
                         {/* ── Overlays (all absolute, full-height of timeline container) ── */}
 
@@ -573,17 +623,30 @@ const EditorContent: React.FC = () => {
                             style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                         />
                     </div>
+                            </Panel>
+                            
+                            <DividerHandle orientation="vertical" />
 
-                    {/* Mixer Channels */}
-                    <div className="flex-1 overflow-hidden border-t border-gray-700 pt-1 sm:pt-2 text-white min-h-0">
-                        <MixerBoard />
-                    </div>
-                </div>
+                            {/* Mixer Channels */}
+                            <Panel id="left-mixer" minSize={10} className="flex flex-col text-white min-h-0 bg-gray-800/50 pt-1 sm:pt-2 relative z-10 overflow-hidden">
+                                <MixerBoard />
+                            </Panel>
+                        </Group>
+                    </Panel>
 
-                {/* Right: Sidebar */}
-                <div className="w-full sm:w-64 lg:w-72 bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
-                    {/* Video Player Preview */}
-                    <div className="aspect-video max-h-32 sm:max-h-none bg-black border-b border-gray-800 relative group shrink-0">
+                    <DividerHandle orientation="horizontal" />
+
+                    {/* Right: Sidebar */}
+                    <Panel id="main-right" minSize={15} className="w-full bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
+                        <Group 
+                            key={`sidebar-${layoutVersion}`} 
+                            orientation="vertical" 
+                            onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, sidebar: sizes }))}
+                            defaultLayout={panelSizes.sidebar}
+                        >
+                            {/* Video Player Preview */}
+                            <Panel id="sidebar-preview" minSize={10} className="flex flex-col relative shrink-0">
+                                <div className={`flex-1 ${invertBackground ? 'bg-white' : 'bg-black'} relative group transition-colors duration-500 overflow-hidden`}>
                         {videoSrc ? (
                             <video
                                 ref={videoRef}
@@ -630,9 +693,9 @@ const EditorContent: React.FC = () => {
                                     {activeLyricText.split('\n').map((line, i) => (
                                         <p 
                                             key={i} 
-                                            className="text-white font-bold tracking-tight block px-1"
+                                            className={`font-bold tracking-tight block px-1 ${invertBackground ? 'text-black' : 'text-white'}`}
                                             style={{
-                                                textShadow: '0px 1px 4px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
+                                                textShadow: invertBackground ? 'none' : '0px 1px 4px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
                                                 lineHeight: '1.2',
                                                 fontFamily: lyricsSettings.fontFamily,
                                                 fontSize: `${Math.max(10, lyricsSettings.fontSize * 0.25)}px`
@@ -652,18 +715,25 @@ const EditorContent: React.FC = () => {
                                 <span>L</span><span>R</span>
                             </div>
                         </div>
-                    </div>
+                                </div>
+                            </Panel>
 
-                    {/* Second Screen Button */}
-                    <div className="px-2 py-1 border-b border-gray-800 shrink-0">
-                        <SecondScreen />
-                    </div>
+                            <DividerHandle orientation="vertical" />
 
-                    {/* Song List (fills remaining) */}
-                    <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                        <SongList />
-                    </div>
-                </div>
+                            <Panel id="sidebar-list" minSize={10} className="flex flex-col min-h-0">
+                                {/* Second Screen Button */}
+                                <div className="px-2 py-1 border-b border-gray-800 shrink-0">
+                                    <SecondScreen />
+                                </div>
+
+                                {/* Song List (fills remaining) */}
+                                <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                                    <SongList />
+                                </div>
+                            </Panel>
+                        </Group>
+                    </Panel>
+                </Group>
             </div>
 
             {/* Footer: Transport Controls */}

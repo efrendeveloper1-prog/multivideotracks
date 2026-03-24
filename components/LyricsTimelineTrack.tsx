@@ -57,7 +57,7 @@ export const LyricsTimelineTrack: React.FC = () => {
     return (
         <div 
             ref={containerRef}
-            className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden h-10 sm:h-12 bg-gray-900 overflow-visible"
+            className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden h-full bg-gray-900 overflow-visible"
             onClick={(e) => e.stopPropagation()} // Prevent triggering timeline seeks
             onMouseDown={(e) => e.stopPropagation()}
         >

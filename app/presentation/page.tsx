@@ -15,6 +15,7 @@ function PresentationContent() {
     const channelRef = useRef<BroadcastChannel | null>(null);
     const [currentLyric, setCurrentLyric] = useState<string | null>(null);
     const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings | null>(null);
+    const [invertBackground, setInvertBackground] = useState<boolean>(false);
 
     useEffect(() => {
         const channel = new BroadcastChannel('second-screen-video');
@@ -56,6 +57,9 @@ function PresentationContent() {
                 if (event.data.lyricsSettings !== undefined) {
                     setLyricsSettings(event.data.lyricsSettings);
                 }
+                if (event.data.invertBackground !== undefined) {
+                    setInvertBackground(event.data.invertBackground);
+                }
             }
         };
 
@@ -66,7 +70,7 @@ function PresentationContent() {
 
     return (
         <div
-            className="w-screen h-screen bg-black flex items-center justify-center overflow-hidden cursor-none"
+            className={`w-screen h-screen flex items-center justify-center overflow-hidden cursor-none transition-colors duration-500 ${invertBackground ? 'bg-white' : 'bg-black'}`}
             onDoubleClick={() => {
                 if (!document.fullscreenElement) {
                     document.documentElement.requestFullscreen().catch(() => { });
@@ -101,9 +105,9 @@ function PresentationContent() {
                         {currentLyric.split('\n').map((line, i) => (
                             <p 
                                 key={i} 
-                                className="text-white font-bold tracking-tight block"
+                                className={`font-bold tracking-tight block ${invertBackground ? 'text-black' : 'text-white'}`}
                                 style={{
-                                    textShadow: '0px 4px 20px rgba(0,0,0,0.9), 0px 2px 8px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
+                                    textShadow: invertBackground ? 'none' : '0px 4px 20px rgba(0,0,0,0.9), 0px 2px 8px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
                                     lineHeight: '1.2',
                                     fontFamily: lyricsSettings.fontFamily,
                                     fontSize: `${Math.max(20, lyricsSettings.fontSize)}px`

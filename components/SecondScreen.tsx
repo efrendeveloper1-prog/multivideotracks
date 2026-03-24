@@ -4,7 +4,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
-    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings } = useAudioEngine();
+    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings, invertBackground, setInvertBackground } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
@@ -13,10 +13,12 @@ export const SecondScreen: React.FC = () => {
     const lyricsRef = useRef(lyrics);
     const currentTimeRef = useRef(currentTime);
     const lyricsSettingsRef = useRef(lyricsSettings);
+    const invertBackgroundRef = useRef(invertBackground);
 
     useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
     useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
     useEffect(() => { lyricsSettingsRef.current = lyricsSettings; }, [lyricsSettings]);
+    useEffect(() => { invertBackgroundRef.current = invertBackground; }, [invertBackground]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -28,11 +30,7 @@ export const SecondScreen: React.FC = () => {
             return;
         }
 
-        const videoTrackExists = tracks.some(t => t.name === "VIDEO TRACK");
-        if (!videoTrackExists && lyrics.length === 0) {
-            alert('No hay video ni letras cargadas para mostrar en segunda pantalla');
-            return;
-        }
+        // Removed constraint to allow opening without video or lyrics
 
         // Open a new window (user drags it to the second monitor)
         const win = window.open(
@@ -100,7 +98,8 @@ export const SecondScreen: React.FC = () => {
                     playing: !videoEl.paused,
                     src: videoEl.src,
                     currentLyric: activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current
+                    lyricsSettings: lyricsSettingsRef.current,
+                    invertBackground: invertBackgroundRef.current
                 });
             } else {
                 channelRef.current!.postMessage({
@@ -109,7 +108,8 @@ export const SecondScreen: React.FC = () => {
                     playing: false,
                     src: null,
                     currentLyric: isBlackout || isInCutRegion ? null : activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current
+                    lyricsSettings: lyricsSettingsRef.current,
+                    invertBackground: invertBackgroundRef.current
                 });
             }
         }, 300); // 300ms is good for lyric sync
@@ -190,6 +190,27 @@ export const SecondScreen: React.FC = () => {
             >
                 <span className="text-sm font-bold truncate shrink-0">×</span>
                 <span className="truncate">Clear</span>
+            </button>
+
+            <button
+                onClick={() => setInvertBackground(prev => !prev)}
+                className={`
+                    flex items-center justify-center gap-1.5 w-full py-1.5 px-2 rounded
+                    transition-all duration-200 text-[11px] font-medium
+                    ${invertBackground
+                        ? 'bg-white text-black border border-gray-300 hover:bg-gray-100'
+                        : 'bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700'
+                    }
+                `}
+                title={invertBackground ? 'Fondo claro (click para oscuro)' : 'Fondo oscuro (click para claro)'}
+            >
+                <svg 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    viewBox="0 0 24 24" 
+                    className="w-4 h-4 shrink-0"
+                >
+                    <path d="M12 22c4.97 0 9-4.03 9-9 0-4.97-9-11-9-11S3 8.03 3 13c0 4.97 4.03 9 9 9zm0-18.73c2.4 2.87 6 7.42 6 9.73 0 3.31-2.69 6-6 6V3.27z" fill="currentColor"/>
+                </svg>
             </button>
         </div>
     );
