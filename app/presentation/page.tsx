@@ -60,6 +60,9 @@ function PresentationContent() {
                 if (event.data.invertBackground !== undefined) {
                     setInvertBackground(event.data.invertBackground);
                 }
+                if (event.data.videoOpacity !== undefined) {
+                    video.style.opacity = event.data.videoOpacity.toString();
+                }
             }
         };
 

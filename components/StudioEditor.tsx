@@ -30,6 +30,9 @@ const EditorContent: React.FC = () => {
         setVideoElement, tracks, currentTime, duration, seek, lyrics, lyricsSettings,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
         videoEndTime, setVideoEndTime,
+        videoFadeIn, setVideoFadeIn,
+        videoFadeOut, setVideoFadeOut,
+        videoOpacity,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
         invertBackground, panelSizes, setPanelSizes, layoutVersion
@@ -46,6 +49,7 @@ const EditorContent: React.FC = () => {
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
     const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
+    const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showLyricsPreview, setShowLyricsPreview] = useState(true);
@@ -184,7 +188,43 @@ const EditorContent: React.FC = () => {
         };
     }, [draggingBoundary, duration, setCutRegions]);
     
-    // Handle resizing video track end
+    // Handle fade resizing
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (resizingFade && timelineRef.current) {
+                const rect = timelineRef.current.getBoundingClientRect();
+                const pixelsPerSecond = rect.width / duration;
+                const deltaX = e.clientX - resizingFade.startX;
+                const deltaSeconds = deltaX / pixelsPerSecond;
+
+                if (resizingFade.type === 'in') {
+                    const newValue = Math.max(0, resizingFade.initialValue + deltaSeconds);
+                    // Fade in cannot exceed half the block duration or some limit
+                    const maxFade = (videoEndTime - Math.max(0, -videoOffset)) * 0.5;
+                    setVideoFadeIn(Math.min(newValue, maxFade));
+                } else {
+                    const newValue = Math.max(0, resizingFade.initialValue - deltaSeconds);
+                    const maxFade = (videoEndTime - Math.max(0, -videoOffset)) * 0.5;
+                    setVideoFadeOut(Math.min(newValue, maxFade));
+                }
+            }
+        };
+
+        const handleMouseUp = () => {
+            setResizingFade(null);
+        };
+
+        if (resizingFade) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [resizingFade, duration, videoEndTime, videoOffset, setVideoFadeIn, setVideoFadeOut]);
+
+    // Handle video track edge resizing
     useEffect(() => {
         if (resizingVideo === null) return;
 
@@ -542,6 +582,63 @@ const EditorContent: React.FC = () => {
                                                )}
                                             </div>
 
+                                            {/* Fade Overlays (SVG) */}
+                                            <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+                                                {videoFadeIn > 0 && (
+                                                    <path 
+                                                        d={`M 0 0 L ${(videoFadeIn / Math.max(0.1, videoEndTime - Math.max(0, -videoOffset))) * 100} 0 L 0 100 Z`} 
+                                                        className="fill-white/20" 
+                                                        vectorEffect="non-scaling-stroke"
+                                                        preserveAspectRatio="none"
+                                                    />
+                                                )}
+                                                {videoFadeOut > 0 && (
+                                                    <path 
+                                                        d={`M 100 0 L ${100 - (videoFadeOut / Math.max(0.1, videoEndTime - Math.max(0, -videoOffset))) * 100} 0 L 100 100 Z`} 
+                                                        className="fill-white/20" 
+                                                        vectorEffect="non-scaling-stroke"
+                                                        preserveAspectRatio="none"
+                                                    />
+                                                )}
+                                            </svg>
+
+                                            {/* Fade Handles (Vegas Style) */}
+                                            {!editMode && (
+                                                <>
+                                                    {/* Fade In (Top Left) */}
+                                                    <div 
+                                                        className="absolute top-0 left-0 w-4 h-4 cursor-ew-resize z-30 group"
+                                                        onMouseDown={(e) => {
+                                                            e.stopPropagation();
+                                                            setResizingFade({ type: "in", startX: e.clientX, initialValue: videoFadeIn });
+                                                        }}
+                                                    >
+                                                        <div className="absolute top-0 left-0 w-full h-full text-white/50 group-hover:text-white transition-colors">
+                                                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                                                <path d="M4 4 Q 4 20 20 20 L 20 4 Z" opacity="0.3" />
+                                                                <path d="M4 4 Q 4 20 20 20" fill="none" stroke="currentColor" strokeWidth="2" />
+                                                            </svg>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Fade Out (Top Right) */}
+                                                    <div 
+                                                        className="absolute top-0 right-0 w-4 h-4 cursor-ew-resize z-30 group"
+                                                        onMouseDown={(e) => {
+                                                            e.stopPropagation();
+                                                            setResizingFade({ type: "out", startX: e.clientX, initialValue: videoFadeOut });
+                                                        }}
+                                                    >
+                                                        <div className="absolute top-0 right-0 w-full h-full text-white/50 group-hover:text-white transition-colors">
+                                                            <svg viewBox="0 0 24 24" fill="currentColor" transform="scale(-1, 1)">
+                                                                <path d="M4 4 Q 4 20 20 20 L 20 4 Z" opacity="0.3" />
+                                                                <path d="M4 4 Q 4 20 20 20" fill="none" stroke="currentColor" strokeWidth="2" />
+                                                            </svg>
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
+
                                             {!editMode && (
                                                 <div 
                                                     className="absolute inset-y-0 right-0 w-3 cursor-ew-resize hover:bg-white/20 transition-colors z-40 group"
@@ -707,8 +804,12 @@ const EditorContent: React.FC = () => {
                         {videoSrc ? (
                             <video
                                 ref={videoRef}
-                                src={videoSrc}
+                                src={videoSrc || undefined}
                                 className="w-full h-full object-contain"
+                                style={{ opacity: videoOpacity }}
+                                onTimeUpdate={(e) => {
+                                    // Sycn timeline if needed - but usually controlled by loop
+                                }}
                             />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">

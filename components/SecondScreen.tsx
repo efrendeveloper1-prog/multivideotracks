@@ -4,7 +4,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
-    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings, invertBackground, setInvertBackground } = useAudioEngine();
+    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings, invertBackground, setInvertBackground, videoOpacity } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
@@ -14,11 +14,13 @@ export const SecondScreen: React.FC = () => {
     const currentTimeRef = useRef(currentTime);
     const lyricsSettingsRef = useRef(lyricsSettings);
     const invertBackgroundRef = useRef(invertBackground);
+    const videoOpacityRef = useRef(videoOpacity);
 
     useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
     useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
     useEffect(() => { lyricsSettingsRef.current = lyricsSettings; }, [lyricsSettings]);
     useEffect(() => { invertBackgroundRef.current = invertBackground; }, [invertBackground]);
+    useEffect(() => { videoOpacityRef.current = videoOpacity; }, [videoOpacity]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -99,7 +101,8 @@ export const SecondScreen: React.FC = () => {
                     src: videoEl.src,
                     currentLyric: activeLyricText,
                     lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current
+                    invertBackground: invertBackgroundRef.current,
+                    videoOpacity: videoOpacityRef.current
                 });
             } else {
                 channelRef.current!.postMessage({
@@ -109,7 +112,8 @@ export const SecondScreen: React.FC = () => {
                     src: null,
                     currentLyric: isBlackout || isInCutRegion ? null : activeLyricText,
                     lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current
+                    invertBackground: invertBackgroundRef.current,
+                    videoOpacity: 0
                 });
             }
         }, 300); // 300ms is good for lyric sync

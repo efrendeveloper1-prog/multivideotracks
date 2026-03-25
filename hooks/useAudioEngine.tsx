@@ -74,6 +74,8 @@ export interface Song {
     cachedSplitPoints?: number[];
     cachedLyrics?: LyricBlock[];
     cachedLyricsSettings?: LyricsSettings;
+    cachedVideoFadeIn?: number;
+    cachedVideoFadeOut?: number;
     isPlaceholder?: boolean;
     analysis?: AudioAnalysis | null;
 }
@@ -101,8 +103,13 @@ interface AudioEngineContextType {
     trimVideoToAudio: () => void; // Trim video to match audio duration
     videoOffset: number; // Horizontal offset in seconds for video sync
     setVideoOffset: (offset: number) => void;
-    videoEndTime: number; // Timeline end position for video track
+    videoEndTime: number; // Timeline end position
     setVideoEndTime: (time: number) => void;
+    videoFadeIn: number;
+    setVideoFadeIn: (val: number) => void;
+    videoFadeOut: number;
+    setVideoFadeOut: (val: number) => void;
+    videoOpacity: number;
     cutRegions: CutRegion[];
     setCutRegions: (regions: CutRegion[]) => void;
     splitPoints: number[];
@@ -164,6 +171,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [videoDuration, setVideoDuration] = useState(0);
     const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
     const [videoEndTime, setVideoEndTime] = useState(0); // timeline end time for video
+    const [videoFadeIn, setVideoFadeIn] = useState(0);
+    const [videoFadeOut, setVideoFadeOut] = useState(0);
+    const [videoOpacity, setVideoOpacity] = useState(1);
     const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
     const [splitPoints, setSplitPoints] = useState<number[]>([]);
     const [isInCutRegion, setIsInCutRegion] = useState(false);
@@ -209,6 +219,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const tracksRef = useRef<Track[]>([]);
     const videoDurationRef = useRef<number>(0);
     const videoEndTimeRef = useRef<number>(0);
+    const videoFadeInRef = useRef<number>(0);
+    const videoFadeOutRef = useRef<number>(0);
     const cutRegionsRef = useRef<CutRegion[]>([]);
     const splitPointsRef = useRef<number[]>([]);
     const isInCutRegionRef = useRef<boolean>(false);
@@ -252,6 +264,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { tracksRef.current = tracks; }, [tracks]);
     useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
     useEffect(() => { videoEndTimeRef.current = videoEndTime; }, [videoEndTime]);
+    useEffect(() => { videoFadeInRef.current = videoFadeIn; }, [videoFadeIn]);
+    useEffect(() => { videoFadeOutRef.current = videoFadeOut; }, [videoFadeOut]);
     useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
     useEffect(() => { splitPointsRef.current = splitPoints; }, [splitPoints]);
     useEffect(() => { lyricsRef.current = lyrics;    }, [lyrics]);
@@ -326,7 +340,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         } catch (e) {
             console.error("Error decoding audio", e);
         }
-    }, []);
+    }, [songAnalysis]);
 
     const addVideoTrack = useCallback(async (videoFile: File) => {
         if (!audioContextRef.current) return;
@@ -395,6 +409,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 newVideoDuration = tempVideo.duration;
                 setVideoDuration(tempVideo.duration);
                 setVideoEndTime(tempVideo.duration);
+                setVideoFadeIn(0); // Reset fades
+                setVideoFadeOut(0); // Reset fades
                 // Only use video duration if there are NO audio tracks yet
                 setDuration(prev => {
                     if (prev === 0) return tempVideo.duration; // No audio, use video duration
@@ -425,6 +441,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedTracks: newCachedTracks,
                         cachedVideoDuration: duration,
                         cachedVideoEndTime: duration,
+                        cachedVideoFadeIn: 0,
+                        cachedVideoFadeOut: 0,
                     };
                 }
                 return s;
@@ -471,6 +489,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             isInCutRegionRef.current = false;
             setIsInCutRegion(false);
         }
+        setVideoOpacity(1); // Reset video opacity on stop
     };
 
     const playAudio = useCallback((startOffset: number) => {
@@ -585,8 +604,26 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
                 const shouldBeInactive = !!activeCut || isPastVideoEnd || isPastVideoFile || videoTimelinePos < 0;
 
+                // Calculate video opacity based on fades
+                let opacity = 1;
                 if (shouldBeInactive) {
-                    // Mute video audio gain during the gap
+                    opacity = 0;
+                } else {
+                    const videoStart = Math.max(0, -videoOffsetRef.current);
+                    const videoEnd = videoEndTimeRef.current;
+                    const fadeIn = videoFadeInRef.current;
+                    const fadeOut = videoFadeOutRef.current;
+
+                    if (fadeIn > 0 && calculatedTime < videoStart + fadeIn) {
+                        opacity = Math.max(0, (calculatedTime - videoStart) / fadeIn);
+                    } else if (fadeOut > 0 && calculatedTime > videoEnd - fadeOut) {
+                        opacity = Math.max(0, (videoEnd - calculatedTime) / fadeOut);
+                    }
+                }
+                setVideoOpacity(opacity);
+
+                if (shouldBeInactive) {
+                    // Mute video audio gain
                     if (!isInCutRegionRef.current) {
                         isInCutRegionRef.current = true;
                         setIsInCutRegion(true);
@@ -601,31 +638,32 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                                 }
                             });
                         }
-                        // Pause video during the gap (stops visual output)
+                        // Pause video
                         if (videoRef.current && !videoRef.current.paused) {
                             videoRef.current.pause();
                         }
                     }
                 } else {
-                    // We are outside a cut region and within video bounds — restore video audio / video if needed
+                    // Restore audio volume following the fade opacity
+                    if (audioContextRef.current) {
+                        const anySolo = tracksRef.current.some(t => t.soloed);
+                        tracksRef.current.forEach(track => {
+                            if (track.isVideoAudio) {
+                                const gainNode = gainNodesRef.current.get(track.id);
+                                if (gainNode) {
+                                    const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
+                                    const targetVol = shouldLogicallyMute ? 0 : track.volume * opacity;
+                                    gainNode.gain.cancelScheduledValues(audioContextRef.current!.currentTime);
+                                    gainNode.gain.setTargetAtTime(targetVol, audioContextRef.current!.currentTime, 0.02);
+                                }
+                            }
+                        });
+                    }
+
                     if (isInCutRegionRef.current) {
                         isInCutRegionRef.current = false;
                         setIsInCutRegion(false);
-                        if (audioContextRef.current) {
-                            const anySolo = tracksRef.current.some(t => t.soloed);
-                            tracksRef.current.forEach(track => {
-                                if (track.isVideoAudio) {
-                                    const gainNode = gainNodesRef.current.get(track.id);
-                                    if (gainNode) {
-                                        const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
-                                        const targetVol = shouldLogicallyMute ? 0 : track.volume;
-                                        gainNode.gain.cancelScheduledValues(audioContextRef.current!.currentTime);
-                                        gainNode.gain.setTargetAtTime(targetVol, audioContextRef.current!.currentTime, 0.02);
-                                    }
-                                }
-                            });
-                        }
-                        // Resume video at the correct position
+                        // Resume video
                         if (videoRef.current) {
                             if (videoTimelinePos >= 0 && videoTimelinePos < videoDurationRef.current) {
                                 videoRef.current.currentTime = videoTimelinePos;
@@ -770,6 +808,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const revertVideo = useCallback(() => {
         setCutRegions([]);
         setSplitPoints([]);
+        setVideoFadeIn(0);
+        setVideoFadeOut(0);
     }, []);
 
     // Lyrics management
@@ -907,6 +947,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
             cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
             cachedVideoEndTime: placeholderSettings?.cachedVideoEndTime || newVideoDuration || newDuration,
+            cachedVideoFadeIn: placeholderSettings?.cachedVideoFadeIn || 0,
+            cachedVideoFadeOut: placeholderSettings?.cachedVideoFadeOut || 0,
             cachedCutRegions: placeholderSettings?.cachedCutRegions || song.cachedCutRegions || [],
             cachedSplitPoints: placeholderSettings?.cachedSplitPoints || song.cachedSplitPoints || [],
             cachedLyrics: placeholderSettings?.cachedLyrics || song.cachedLyrics || [],
@@ -938,6 +980,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedVideoDuration: videoDurationRef.current,
                         cachedVideoOffset: videoOffsetRef.current,
                         cachedVideoEndTime: videoEndTimeRef.current,
+                        cachedVideoFadeIn: videoFadeInRef.current,
+                        cachedVideoFadeOut: videoFadeOutRef.current,
                         cachedCutRegions: cutRegionsRef.current,
                         cachedSplitPoints: splitPointsRef.current,
                         cachedLyrics: lyricsRef.current,
@@ -972,6 +1016,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoDuration(song.cachedVideoDuration || 0);
             setVideoOffset(song.cachedVideoOffset || 0);
             setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
+            setVideoFadeIn(song.cachedVideoFadeIn || 0);
+            setVideoFadeOut(song.cachedVideoFadeOut || 0);
             setCutRegions(song.cachedCutRegions || []);
             setSplitPoints(song.cachedSplitPoints || []);
             setLyrics(song.cachedLyrics || []);
@@ -984,6 +1030,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setVideoDuration(0);
             setVideoOffset(0);
             setVideoEndTime(0);
+            setVideoFadeIn(0);
+            setVideoFadeOut(0);
             setCutRegions([]);
             setSplitPoints([]);
             setLyrics([]);
@@ -1026,6 +1074,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setVideoDuration(song.cachedVideoDuration || 0);
         setVideoOffset(song.cachedVideoOffset || 0);
         setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
+        setVideoFadeIn(song.cachedVideoFadeIn || 0);
+        setVideoFadeOut(song.cachedVideoFadeOut || 0);
         setCutRegions(song.cachedCutRegions || []);
         setSplitPoints(song.cachedSplitPoints || []);
         setLyrics(song.cachedLyrics || []);
@@ -1044,6 +1094,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     cachedVideoDuration: videoDurationRef.current,
                     cachedVideoOffset: videoOffsetRef.current,
                     cachedVideoEndTime: videoEndTimeRef.current,
+                    cachedVideoFadeIn: videoFadeInRef.current,
+                    cachedVideoFadeOut: videoFadeOutRef.current,
                     cachedCutRegions: cutRegionsRef.current,
                     cachedSplitPoints: splitPointsRef.current,
                     cachedLyrics: lyricsRef.current,
@@ -1068,6 +1120,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedVideoDuration: song.cachedVideoDuration,
                 cachedVideoOffset: song.cachedVideoOffset,
                 cachedVideoEndTime: song.cachedVideoEndTime,
+                cachedVideoFadeIn: song.cachedVideoFadeIn,
+                cachedVideoFadeOut: song.cachedVideoFadeOut,
                 cachedCutRegions: song.cachedCutRegions,
                 cachedSplitPoints: song.cachedSplitPoints,
                 cachedLyrics: song.cachedLyrics,
@@ -1115,6 +1169,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedVideoDuration: pSong.cachedVideoDuration,
                 cachedVideoOffset: pSong.cachedVideoOffset,
                 cachedVideoEndTime: pSong.cachedVideoEndTime,
+                cachedVideoFadeIn: pSong.cachedVideoFadeIn || 0,
+                cachedVideoFadeOut: pSong.cachedVideoFadeOut || 0,
                 cachedCutRegions: pSong.cachedCutRegions,
                 cachedSplitPoints: pSong.cachedSplitPoints,
                 cachedLyrics: pSong.cachedLyrics || [],
@@ -1138,6 +1194,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setDuration(0);
             setVideoDuration(0);
             setVideoOffset(0);
+            setVideoFadeIn(0);
+            setVideoFadeOut(0);
             setCutRegions([]);
             setSplitPoints([]);
             setLyrics([]);
@@ -1231,11 +1289,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             importPreset,
             videoDuration,
             trimVideoToAudio,
-            videoEndTime,
-            setVideoEndTime,
-            songAnalysis,
             videoOffset,
             setVideoOffset,
+            videoEndTime,
+            setVideoEndTime,
+            videoFadeIn,
+            setVideoFadeIn,
+            videoFadeOut,
+            setVideoFadeOut,
+            videoOpacity,
             cutRegions,
             setCutRegions,
             splitPoints,
@@ -1258,6 +1320,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setPanelSizes,
             layoutVersion,
             loadingProgress,
+            songAnalysis,
             getMasterLevels,
             getTrackLevel
         }}>

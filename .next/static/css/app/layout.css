@@ -1463,6 +1463,9 @@ video {
   -webkit-background-clip: text;
           background-clip: text;
 }
+.fill-white\/20 {
+  fill: rgb(255 255 255 / 0.2);
+}
 .object-contain {
   -o-object-fit: contain;
      object-fit: contain;
@@ -1733,6 +1736,9 @@ video {
 .text-white {
   --tw-text-opacity: 1;
   color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.text-white\/50 {
+  color: rgb(255 255 255 / 0.5);
 }
 .text-zinc-400 {
   --tw-text-opacity: 1;
@@ -2082,6 +2088,10 @@ video {
 .group:hover .group-hover\:bg-yellow-400 {
   --tw-bg-opacity: 1;
   background-color: rgb(250 204 21 / var(--tw-bg-opacity, 1));
+}
+.group:hover .group-hover\:text-white {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
 }
 .group:hover .group-hover\:opacity-100 {
   opacity: 1;
