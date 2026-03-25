@@ -363,82 +363,85 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             buffer: undefined,
             volume: oldVidTrack ? oldVidTrack.volume : 1,
             pan: oldVidTrack ? oldVidTrack.pan : 1,
-            muted: oldVidTrack ? oldVidTrack.muted : false,
+            muted: oldVidTrack ? oldVidTrack.muted : true, // Default to muted
             soloed: oldVidTrack ? oldVidTrack.soloed : false,
             color: '#a855f7'
         };
 
-        // 2. Try to extract audio from video and create a separate audio channel
-        let audioTrack: Track | null = null;
-        try {
-            const arrayBuffer = await videoFile.arrayBuffer();
-            const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
+        // 2. Create the audio track (initially without buffer)
+        let audioTrack: Track = {
+            id: oldVidAudioTrack ? oldVidAudioTrack.id : crypto.randomUUID(),
+            name: "VIDEO AUDIO",
+            file: videoFile,
+            buffer: undefined,
+            volume: oldVidAudioTrack ? oldVidAudioTrack.volume : 1,
+            pan: oldVidAudioTrack ? oldVidAudioTrack.pan : 1,
+            muted: oldVidAudioTrack ? oldVidAudioTrack.muted : true,
+            soloed: oldVidAudioTrack ? oldVidAudioTrack.soloed : false,
+            color: '#c084fc',
+            isVideoAudio: true
+        };
 
-            audioTrack = {
-                id: oldVidAudioTrack ? oldVidAudioTrack.id : crypto.randomUUID(),
-                name: "VIDEO AUDIO",
-                file: videoFile,
-                buffer: audioBuffer,
-                volume: oldVidAudioTrack ? oldVidAudioTrack.volume : 1,
-                pan: oldVidAudioTrack ? oldVidAudioTrack.pan : 1,
-                muted: oldVidAudioTrack ? oldVidAudioTrack.muted : false,
-                soloed: oldVidAudioTrack ? oldVidAudioTrack.soloed : false,
-                color: '#c084fc',
-                isVideoAudio: true
-            };
-        } catch (e) {
-            console.warn("Video has no extractable audio or decode failed:", e);
-        }
-
-        // Apply immediately to tracks state
+        // Apply immediately to tracks state so UI updates right away
         setTracks(prev => {
             const filtered = prev.filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
-            const newTracks = [...filtered, videoTrack];
-            if (audioTrack) newTracks.push(audioTrack);
-            return sortTracks(newTracks);
+            return sortTracks([...filtered, videoTrack, audioTrack]);
         });
 
-        // Get video duration
+        // 3. Extract audio from video asynchronously
+        (async () => {
+            try {
+                const arrayBuffer = await videoFile.arrayBuffer();
+                const audioBuffer = await audioContextRef.current!.decodeAudioData(arrayBuffer);
+                
+                setTracks(prev => prev.map(t => t.id === audioTrack.id ? { ...t, buffer: audioBuffer } : t));
+                
+                // Also update playlist cache if needed
+                if (activeSongIdRef.current) {
+                    setPlaylist(pPrev => pPrev.map(s => {
+                        if (s.id === activeSongIdRef.current) {
+                            const filteredCached = (s.cachedTracks || []).filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
+                            const updatedAudioTrack = { ...audioTrack, buffer: audioBuffer };
+                            return {
+                                ...s,
+                                cachedTracks: sortTracks([...filteredCached, videoTrack, updatedAudioTrack])
+                            };
+                        }
+                        return s;
+                    }));
+                }
+            } catch (e) {
+                console.warn("Video audio extraction failed or no audio track found:", e);
+            }
+        })();
+
+        // 4. Get video duration
         let newVideoDuration = 0;
         const tempVideo = document.createElement('video');
         tempVideo.src = url;
 
-        // Wrap the onloadedmetadata in a promise since we need the duration to update caches
         const durationPromise = new Promise<number>((resolve) => {
             tempVideo.onloadedmetadata = () => {
                 newVideoDuration = tempVideo.duration;
                 setVideoDuration(tempVideo.duration);
                 setVideoEndTime(tempVideo.duration);
-                setVideoFadeIn(0); // Reset fades
-                setVideoFadeOut(0); // Reset fades
-                // Only use video duration if there are NO audio tracks yet
-                setDuration(prev => {
-                    if (prev === 0) return tempVideo.duration; // No audio, use video duration
-                    return prev; // Audio exists, keep audio duration as master
-                });
+                setVideoFadeIn(0);
+                setVideoFadeOut(0);
+                setDuration(prev => (prev === 0 ? tempVideo.duration : prev));
                 resolve(newVideoDuration);
             };
-            tempVideo.onerror = () => {
-                resolve(0);
-            }
+            tempVideo.onerror = () => resolve(0);
         });
 
         const duration = await durationPromise;
 
-        // Store videoFile in the active song
+        // Final cache update for duration/metadata
         if (activeSongIdRef.current) {
             setPlaylist(prev => prev.map(s => {
                 if (s.id === activeSongIdRef.current) {
-                    const filteredCached = (s.cachedTracks || []).filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
-                    const newCachedTracks = [...filteredCached, videoTrack];
-                    if (audioTrack) {
-                        newCachedTracks.push(audioTrack);
-                    }
-
                     return {
                         ...s,
                         videoFile,
-                        cachedTracks: newCachedTracks,
                         cachedVideoDuration: duration,
                         cachedVideoEndTime: duration,
                         cachedVideoFadeIn: 0,
@@ -899,7 +902,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 buffer: undefined,
                 volume: oldVid ? oldVid.volume : 1,
                 pan: oldVid ? oldVid.pan : 1,
-                muted: oldVid ? oldVid.muted : false,
+                muted: oldVid ? oldVid.muted : true, // Default to muted
                 soloed: oldVid ? oldVid.soloed : false,
                 color: '#a855f7'
             });
@@ -919,7 +922,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     buffer: audioBuffer,
                     volume: oldAudio ? oldAudio.volume : 1,
                     pan: oldAudio ? oldAudio.pan : 1,
-                    muted: oldAudio ? oldAudio.muted : false,
+                    muted: oldAudio ? oldAudio.muted : true, // Default to muted
                     soloed: oldAudio ? oldAudio.soloed : false,
                     color: '#c084fc',
                     isVideoAudio: true

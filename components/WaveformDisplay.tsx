@@ -16,53 +16,60 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const width = canvas.offsetWidth;
-        const height = canvas.offsetHeight;
+        const draw = () => {
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+            if (width === 0 || height === 0) return;
 
-        // Handle high DPI displays
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-        ctx.scale(dpr, dpr);
+            // Handle high DPI displays
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            ctx.scale(dpr, dpr);
 
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = color;
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = color;
 
-        // Draw Logic
-        // Downsample for performance (otherwise looping 5-20 million samples is slow)
-        const channelData = buffer.getChannelData(0);
-        const step = Math.ceil(channelData.length / width);
-        const amp = height / 2;
+            const channelData = buffer.getChannelData(0);
+            const step = Math.ceil(channelData.length / width);
+            const amp = height / 2;
 
-        ctx.beginPath();
-        for (let i = 0; i < width; i++) {
-            let min = 1.0;
-            let max = -1.0;
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
 
-            for (let j = 0; j < step; j++) {
-                const idx = (i * step) + j;
-                if (idx < channelData.length) {
-                    const datum = channelData[idx];
-                    if (datum < min) min = datum;
-                    if (datum > max) max = datum;
+            for (let i = 0; i < width; i++) {
+                let min = 1.0;
+                let max = -1.0;
+
+                for (let j = 0; j < step; j++) {
+                    const idx = (i * step) + j;
+                    if (idx < channelData.length) {
+                        const datum = channelData[idx];
+                        if (datum < min) min = datum;
+                        if (datum > max) max = datum;
+                    }
                 }
+
+                const yMin = (1 + min) * amp;
+                const yMax = (1 + max) * amp;
+                ctx.moveTo(i, yMin);
+                ctx.lineTo(i, yMax);
             }
+            ctx.stroke();
+        };
 
-            // Draw vertical line from min to max
-            // Normalize audio data (-1 to 1) to canvas height
-            const yMin = (1 + min) * amp;
-            const yMax = (1 + max) * amp;
-            // ctx.fillRect(i, yMin, 1, Math.max(1, yMax - yMin));
+        const resizeObserver = new ResizeObserver(() => {
+            draw();
+        });
 
-            // Optimization: just draw center peak for aesthetic if dense
-            // Or use lineTo
-            ctx.moveTo(i, yMin);
-            ctx.lineTo(i, yMax);
-        }
-        ctx.strokeStyle = color;
-        ctx.stroke();
+        resizeObserver.observe(canvas);
+        draw(); // Initial draw
 
-    }, [buffer, color, height]);
+        return () => {
+            resizeObserver.disconnect();
+        };
+    }, [buffer, color]);
 
     return (
         <canvas

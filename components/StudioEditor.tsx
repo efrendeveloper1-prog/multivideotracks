@@ -564,22 +564,33 @@ const EditorContent: React.FC = () => {
                                                    width: `${(videoDuration / (videoEndTime - Math.max(0, -videoOffset))) * 100}%`
                                                }}
                                             >
-                                               <div className="flex-1 relative w-full min-h-0 shrink-0">
-                                                   <VideoTimelineTrack videoFile={videoTrack.file} duration={videoDuration} height={80} />
-                                                   <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                       VIDEO
-                                                   </div>
-                                               </div>
-
-                                               {/* Extracted Audio Waveform */}
-                                               {videoAudioTrack && videoAudioTrack.buffer && (
-                                                   <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
-                                                       <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
+                                               <div className="flex-1 flex flex-col relative w-full min-h-0 shrink-0">
+                                                   {/* Video Thumbnails Track */}
+                                                   <div className="flex-1 relative w-full min-h-0 shrink-0">
+                                                       <VideoTimelineTrack videoFile={videoTrack.file} duration={videoDuration} height={100} />
                                                        <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                           VIDEO AUDIO
+                                                           VIDEO
                                                        </div>
                                                    </div>
-                                               )}
+                                                   
+                                                   {/* Extracted Audio Waveform Track */}
+                                                   {videoAudioTrack && (
+                                                       <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
+                                                           {videoAudioTrack.buffer ? (
+                                                               <>
+                                                                   <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={100} />
+                                                                   <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                                       VIDEO AUDIO {videoAudioTrack.muted ? '(MUTED)' : ''}
+                                                                   </div>
+                                                               </>
+                                                           ) : (
+                                                               <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-500 italic">
+                                                                   Cargando audio del video...
+                                                               </div>
+                                                           )}
+                                                       </div>
+                                                   )}
+                                               </div>
                                             </div>
 
                                             {/* Fade Overlays (SVG) */}
