@@ -29,6 +29,7 @@ const EditorContent: React.FC = () => {
     const {
         setVideoElement, tracks, currentTime, duration, seek, lyrics, lyricsSettings,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
+        videoEndTime, setVideoEndTime,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
         invertBackground, panelSizes, setPanelSizes, layoutVersion
@@ -44,6 +45,7 @@ const EditorContent: React.FC = () => {
     // Which segment is currently selected (index into the array of gaps between boundaries)
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
+    const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showLyricsPreview, setShowLyricsPreview] = useState(true);
@@ -181,6 +183,36 @@ const EditorContent: React.FC = () => {
             window.removeEventListener('mouseup', handleMouseUp);
         };
     }, [draggingBoundary, duration, setCutRegions]);
+    
+    // Handle resizing video track end
+    useEffect(() => {
+        if (resizingVideo === null) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!timelineRef.current || duration <= 0) return;
+            const rect = timelineRef.current.getBoundingClientRect();
+            const deltaX = e.clientX - resizingVideo.startX;
+            const deltaTime = (deltaX / rect.width) * duration;
+            
+            let newEndTime = resizingVideo.initialEndTime + deltaTime;
+            // Constrain: at least 0.1s long (taking offset into account if needed, but let's keep it simple)
+            const minEndTime = Math.max(0.1, -videoOffset + 0.1);
+            newEndTime = Math.max(minEndTime, Math.min(newEndTime, duration));
+            
+            setVideoEndTime(newEndTime);
+        };
+
+        const handleMouseUp = () => {
+            setResizingVideo(null);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [resizingVideo, duration, videoOffset, setVideoEndTime]);
 
     // --- Keyboard handler ---
     useEffect(() => {
@@ -477,29 +509,54 @@ const EditorContent: React.FC = () => {
                                         style={{ cursor: editMode ? 'pointer' : isDraggingOffset ? 'grabbing' : 'grab' }}
                                     >
                                         <div
-                                            className="flex flex-col relative w-full h-full"
+                                            className="flex flex-col relative h-full overflow-hidden transition-all duration-75"
                                             style={{
-                                                transform: duration > 0 ? `translateX(${(-videoOffset / duration) * 100}%)` : 'none',
+                                                left: `${(Math.max(0, -videoOffset) / duration) * 100}%`,
+                                                width: `${((videoEndTime - Math.max(0, -videoOffset)) / duration) * 100}%`,
+                                                minWidth: "20px"
                                             }}
                                         >
-                                            <div className="flex-1 relative w-full min-h-0 shrink-0">
-                                                <VideoTimelineTrack videoFile={videoTrack.file} duration={duration} height={80} />
-                                                <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                    VIDEO
-                                                </div>
+                                            {/* Translate for the actual frames inside the visible clip */}
+                                            <div 
+                                               className="absolute top-0 bottom-0 flex flex-col overflow-hidden"
+                                               style={{
+                                                   transform: videoDuration > 0 ? `translateX(${( -Math.max(0, videoOffset) / videoDuration ) * 100}%)` : "none",
+                                                   width: `${(videoDuration / (videoEndTime - Math.max(0, -videoOffset))) * 100}%`
+                                               }}
+                                            >
+                                               <div className="flex-1 relative w-full min-h-0 shrink-0">
+                                                   <VideoTimelineTrack videoFile={videoTrack.file} duration={videoDuration} height={80} />
+                                                   <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                       VIDEO
+                                                   </div>
+                                               </div>
+
+                                               {/* Extracted Audio Waveform */}
+                                               {videoAudioTrack && videoAudioTrack.buffer && (
+                                                   <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
+                                                       <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
+                                                       <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                           VIDEO AUDIO
+                                                       </div>
+                                                   </div>
+                                               )}
                                             </div>
 
-                                            {/* Extracted Audio Waveform */}
-                                            {videoAudioTrack && videoAudioTrack.buffer && (
-                                                <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
-                                                    <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={80} />
-                                                    <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                        VIDEO AUDIO
-                                                    </div>
+                                            {!editMode && (
+                                                <div 
+                                                    className="absolute inset-y-0 right-0 w-3 cursor-ew-resize hover:bg-white/20 transition-colors z-40 group"
+                                                    onMouseDown={(e) => {
+                                                        e.stopPropagation();
+                                                        setResizingVideo({
+                                                            startX: e.clientX,
+                                                            initialEndTime: videoEndTime
+                                                        });
+                                                    }}
+                                                >
+                                                    <div className="absolute inset-y-0 right-0 w-0.5 bg-purple-400 opacity-50 group-hover:opacity-100"></div>
                                                 </div>
                                             )}
                                         </div>
-
                                         {/* Offset badge */}
                                         {videoOffset !== 0 && (
                                             <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">

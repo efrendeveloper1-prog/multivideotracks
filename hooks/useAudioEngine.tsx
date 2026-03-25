@@ -69,6 +69,7 @@ export interface Song {
     cachedDuration?: number;
     cachedVideoDuration?: number;
     cachedVideoOffset?: number;
+    cachedVideoEndTime?: number;
     cachedCutRegions?: CutRegion[];
     cachedSplitPoints?: number[];
     cachedLyrics?: LyricBlock[];
@@ -100,6 +101,8 @@ interface AudioEngineContextType {
     trimVideoToAudio: () => void; // Trim video to match audio duration
     videoOffset: number; // Horizontal offset in seconds for video sync
     setVideoOffset: (offset: number) => void;
+    videoEndTime: number; // Timeline end position for video track
+    setVideoEndTime: (time: number) => void;
     cutRegions: CutRegion[];
     setCutRegions: (regions: CutRegion[]) => void;
     splitPoints: number[];
@@ -160,6 +163,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const masterVolumeRef = useRef<number>(1);
     const [videoDuration, setVideoDuration] = useState(0);
     const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
+    const [videoEndTime, setVideoEndTime] = useState(0); // timeline end time for video
     const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
     const [splitPoints, setSplitPoints] = useState<number[]>([]);
     const [isInCutRegion, setIsInCutRegion] = useState(false);
@@ -204,6 +208,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const videoOffsetRef = useRef<number>(0);
     const tracksRef = useRef<Track[]>([]);
     const videoDurationRef = useRef<number>(0);
+    const videoEndTimeRef = useRef<number>(0);
     const cutRegionsRef = useRef<CutRegion[]>([]);
     const splitPointsRef = useRef<number[]>([]);
     const isInCutRegionRef = useRef<boolean>(false);
@@ -246,6 +251,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
     useEffect(() => { tracksRef.current = tracks; }, [tracks]);
     useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
+    useEffect(() => { videoEndTimeRef.current = videoEndTime; }, [videoEndTime]);
     useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
     useEffect(() => { splitPointsRef.current = splitPoints; }, [splitPoints]);
     useEffect(() => { lyricsRef.current = lyrics;    }, [lyrics]);
@@ -388,6 +394,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             tempVideo.onloadedmetadata = () => {
                 newVideoDuration = tempVideo.duration;
                 setVideoDuration(tempVideo.duration);
+                setVideoEndTime(tempVideo.duration);
                 // Only use video duration if there are NO audio tracks yet
                 setDuration(prev => {
                     if (prev === 0) return tempVideo.duration; // No audio, use video duration
@@ -417,6 +424,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         videoFile,
                         cachedTracks: newCachedTracks,
                         cachedVideoDuration: duration,
+                        cachedVideoEndTime: duration,
                     };
                 }
                 return s;
@@ -566,11 +574,18 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const calculatedTime = now - startTimeRef.current;
                 const dur = durationRef.current;
 
-                // Absolute-position cut regions: mute audio+video during gap, keep time advancing
+                // Absolute-position cut regions OR past videoEndTime/videoDuration
+                const isPastVideoEnd = calculatedTime >= videoEndTimeRef.current;
+                const videoTimelinePos = calculatedTime + videoOffsetRef.current;
+                const isPastVideoFile = videoTimelinePos >= videoDurationRef.current;
+                
                 const activeCut = cutRegionsRef.current.find(
                     r => calculatedTime >= r.start && calculatedTime < r.end
                 );
-                if (activeCut) {
+
+                const shouldBeInactive = !!activeCut || isPastVideoEnd || isPastVideoFile || videoTimelinePos < 0;
+
+                if (shouldBeInactive) {
                     // Mute video audio gain during the gap
                     if (!isInCutRegionRef.current) {
                         isInCutRegionRef.current = true;
@@ -592,7 +607,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         }
                     }
                 } else {
-                    // We are outside a cut region — restore video audio / video if needed
+                    // We are outside a cut region and within video bounds — restore video audio / video if needed
                     if (isInCutRegionRef.current) {
                         isInCutRegionRef.current = false;
                         setIsInCutRegion(false);
@@ -612,19 +627,17 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         }
                         // Resume video at the correct position
                         if (videoRef.current) {
-                            const videoPos = calculatedTime + videoOffsetRef.current;
-                            if (videoPos >= 0) {
-                                videoRef.current.currentTime = videoPos;
+                            if (videoTimelinePos >= 0 && videoTimelinePos < videoDurationRef.current) {
+                                videoRef.current.currentTime = videoTimelinePos;
                                 videoRef.current.play().catch(() => { });
                             }
                         }
                     }
                 }
 
-                if (videoRef.current && videoRef.current.paused && isPlayingRef.current) {
-                    const videoStartOffset = calculatedTime + videoOffsetRef.current;
-                    if (videoStartOffset >= 0) {
-                        videoRef.current.currentTime = videoStartOffset;
+                if (videoRef.current && videoRef.current.paused && isPlayingRef.current && !shouldBeInactive) {
+                    if (videoTimelinePos >= 0 && videoTimelinePos < videoDurationRef.current) {
+                        videoRef.current.currentTime = videoTimelinePos;
                         videoRef.current.play().catch(e => console.error("Delayed video play failed", e));
                     }
                 }
@@ -741,6 +754,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (audioTracks.length > 0) {
             const audioDur = Math.max(...audioTracks.map(t => t.buffer!.duration));
             setDuration(audioDur);
+            setVideoEndTime(prev => prev === 0 ? audioDur : Math.min(prev, audioDur));
         }
     }, [tracks]);
 
@@ -892,6 +906,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             cachedDuration: placeholderSettings?.cachedDuration || newDuration || newVideoDuration,
             cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
             cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
+            cachedVideoEndTime: placeholderSettings?.cachedVideoEndTime || newVideoDuration || newDuration,
             cachedCutRegions: placeholderSettings?.cachedCutRegions || song.cachedCutRegions || [],
             cachedSplitPoints: placeholderSettings?.cachedSplitPoints || song.cachedSplitPoints || [],
             cachedLyrics: placeholderSettings?.cachedLyrics || song.cachedLyrics || [],
@@ -922,6 +937,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedDuration: durationRef.current,
                         cachedVideoDuration: videoDurationRef.current,
                         cachedVideoOffset: videoOffsetRef.current,
+                        cachedVideoEndTime: videoEndTimeRef.current,
                         cachedCutRegions: cutRegionsRef.current,
                         cachedSplitPoints: splitPointsRef.current,
                         cachedLyrics: lyricsRef.current,
@@ -955,6 +971,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setDuration(song.cachedDuration || 0);
             setVideoDuration(song.cachedVideoDuration || 0);
             setVideoOffset(song.cachedVideoOffset || 0);
+            setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
             setCutRegions(song.cachedCutRegions || []);
             setSplitPoints(song.cachedSplitPoints || []);
             setLyrics(song.cachedLyrics || []);
@@ -966,6 +983,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setTracks([]);
             setVideoDuration(0);
             setVideoOffset(0);
+            setVideoEndTime(0);
             setCutRegions([]);
             setSplitPoints([]);
             setLyrics([]);
@@ -1007,6 +1025,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setDuration(song.cachedDuration || 0);
         setVideoDuration(song.cachedVideoDuration || 0);
         setVideoOffset(song.cachedVideoOffset || 0);
+        setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
         setCutRegions(song.cachedCutRegions || []);
         setSplitPoints(song.cachedSplitPoints || []);
         setLyrics(song.cachedLyrics || []);
@@ -1024,6 +1043,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     cachedDuration: durationRef.current,
                     cachedVideoDuration: videoDurationRef.current,
                     cachedVideoOffset: videoOffsetRef.current,
+                    cachedVideoEndTime: videoEndTimeRef.current,
                     cachedCutRegions: cutRegionsRef.current,
                     cachedSplitPoints: splitPointsRef.current,
                     cachedLyrics: lyricsRef.current,
@@ -1047,6 +1067,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedDuration: song.cachedDuration,
                 cachedVideoDuration: song.cachedVideoDuration,
                 cachedVideoOffset: song.cachedVideoOffset,
+                cachedVideoEndTime: song.cachedVideoEndTime,
                 cachedCutRegions: song.cachedCutRegions,
                 cachedSplitPoints: song.cachedSplitPoints,
                 cachedLyrics: song.cachedLyrics,
@@ -1093,6 +1114,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 cachedDuration: pSong.cachedDuration,
                 cachedVideoDuration: pSong.cachedVideoDuration,
                 cachedVideoOffset: pSong.cachedVideoOffset,
+                cachedVideoEndTime: pSong.cachedVideoEndTime,
                 cachedCutRegions: pSong.cachedCutRegions,
                 cachedSplitPoints: pSong.cachedSplitPoints,
                 cachedLyrics: pSong.cachedLyrics || [],
@@ -1190,7 +1212,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setTrackPan,
             toggleTrackMute,
             toggleTrackSolo,
-            setVideoElement: (el) => videoRef.current = el,
+            setVideoElement: (el) => {
+                videoRef.current = el;
+                if (el) el.loop = false;
+            },
             masterVolume,
             setMasterVolume,
             playlist,
@@ -1206,6 +1231,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             importPreset,
             videoDuration,
             trimVideoToAudio,
+            videoEndTime,
+            setVideoEndTime,
             songAnalysis,
             videoOffset,
             setVideoOffset,
