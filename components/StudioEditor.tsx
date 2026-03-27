@@ -35,7 +35,7 @@ const EditorContent: React.FC = () => {
         videoOpacity,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
-        invertBackground, panelSizes, setPanelSizes, layoutVersion
+        invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion
     } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -52,7 +52,6 @@ const EditorContent: React.FC = () => {
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
-    const [showLyricsPreview, setShowLyricsPreview] = useState(true);
 
     const activeLyricBlock = useMemo(() => {
         const mostRecentBlock = lyrics
@@ -834,8 +833,8 @@ const EditorContent: React.FC = () => {
                         
                         <div className="absolute top-1 right-1 flex gap-1 z-30">
                             <button 
-                                onClick={() => setShowLyricsPreview(!showLyricsPreview)}
-                                className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${showLyricsPreview ? 'bg-blue-600 text-white border border-blue-500' : 'bg-gray-800 text-gray-400 border border-gray-700'} transition-colors`}
+                                onClick={() => setShowLyrics(!showLyrics)}
+                                className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${showLyrics ? 'bg-blue-600 text-white border border-blue-500' : 'bg-gray-800 text-gray-400 border border-gray-700'} transition-colors`}
                                 title="Mostrar/Ocultar Letras en Preview"
                             >
                                 TXT
@@ -844,7 +843,7 @@ const EditorContent: React.FC = () => {
                         </div>
 
                         {/* Lyrics Preview Overlay */}
-                        {showLyricsPreview && activeLyricText && (
+                        {showLyrics && activeLyricText && (
                             <div className={`absolute inset-x-0 flex flex-col z-20 pointer-events-none px-2
                                 ${lyricsSettings.position === 'top' ? 'top-6 sm:top-8 justify-start' : 
                                   lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 

@@ -16,6 +16,7 @@ function PresentationContent() {
     const [currentLyric, setCurrentLyric] = useState<string | null>(null);
     const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings | null>(null);
     const [invertBackground, setInvertBackground] = useState<boolean>(false);
+    const [showLyrics, setShowLyrics] = useState<boolean>(true);
 
     useEffect(() => {
         const channel = new BroadcastChannel('second-screen-video');
@@ -60,6 +61,9 @@ function PresentationContent() {
                 if (event.data.invertBackground !== undefined) {
                     setInvertBackground(event.data.invertBackground);
                 }
+                if (event.data.showLyrics !== undefined) {
+                    setShowLyrics(event.data.showLyrics);
+                }
                 if (event.data.videoOpacity !== undefined) {
                     video.style.opacity = event.data.videoOpacity.toString();
                 }
@@ -90,7 +94,7 @@ function PresentationContent() {
             />
 
             {/* Lyrics Overlay */}
-            {currentLyric && lyricsSettings && (
+            {showLyrics && currentLyric && lyricsSettings && (
                 <div className={`absolute inset-x-0 flex flex-col z-50 pointer-events-none px-4 md:px-12
                     ${lyricsSettings.position === 'top' ? 'top-[10vh] justify-start' : 
                       lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 

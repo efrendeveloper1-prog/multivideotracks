@@ -4,7 +4,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const SecondScreen: React.FC = () => {
-    const { tracks, isInCutRegion, lyrics, currentTime, lyricsSettings, invertBackground, setInvertBackground, videoOpacity } = useAudioEngine();
+    const { tracks, isPlaying, isInCutRegion, lyrics, currentTime, lyricsSettings, invertBackground, setInvertBackground, videoOpacity, showLyrics } = useAudioEngine();
     const [secondWindow, setSecondWindow] = useState<Window | null>(null);
     const [isBlackout, setIsBlackout] = useState(false);
     const channelRef = useRef<BroadcastChannel | null>(null);
@@ -12,15 +12,19 @@ export const SecondScreen: React.FC = () => {
 
     const lyricsRef = useRef(lyrics);
     const currentTimeRef = useRef(currentTime);
+    const isPlayingRef = useRef(isPlaying);
     const lyricsSettingsRef = useRef(lyricsSettings);
     const invertBackgroundRef = useRef(invertBackground);
     const videoOpacityRef = useRef(videoOpacity);
 
+    const showLyricsRef = useRef(showLyrics);
     useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
     useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
     useEffect(() => { lyricsSettingsRef.current = lyricsSettings; }, [lyricsSettings]);
     useEffect(() => { invertBackgroundRef.current = invertBackground; }, [invertBackground]);
     useEffect(() => { videoOpacityRef.current = videoOpacity; }, [videoOpacity]);
+    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+    useEffect(() => { showLyricsRef.current = showLyrics; }, [showLyrics]);
 
     const toggleSecondScreen = useCallback(() => {
         // If active, close the window
@@ -52,15 +56,31 @@ export const SecondScreen: React.FC = () => {
         const channel = new BroadcastChannel('second-screen-video');
         channelRef.current = channel;
 
-        // Wait for the presentation page to signal it's ready, then send video src
         channel.onmessage = (event) => {
             if (event.data.type === 'ready') {
                 const videoEl = document.querySelector('video') as HTMLVideoElement | null;
+                const t = currentTimeRef.current;
+                const mostRecentBlock = lyricsRef.current
+                    .filter(l => l.startTime !== null && l.startTime <= t)
+                    .sort((a, b) => b.startTime! - a.startTime!)[0];
+                    
+                let activeLyricBlock = mostRecentBlock;
+                if (activeLyricBlock && activeLyricBlock.endTime && activeLyricBlock.endTime < t) {
+                    activeLyricBlock = undefined as any;
+                }
+                    
+                const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
+
                 channel.postMessage({
                     type: 'sync',
                     src: videoEl?.src || null,
                     currentTime: videoEl?.currentTime || 0,
-                    playing: videoEl ? !videoEl.paused : false
+                    playing: videoEl ? !videoEl.paused : false,
+                    currentLyric: activeLyricText,
+                    lyricsSettings: lyricsSettingsRef.current,
+                    invertBackground: invertBackgroundRef.current,
+                    videoOpacity: videoOpacityRef.current,
+                    showLyrics: showLyricsRef.current
                 });
             }
         };
@@ -93,33 +113,38 @@ export const SecondScreen: React.FC = () => {
             const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
 
             const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-            if (videoEl && !isBlackout && !isInCutRegion) {
-                channelRef.current!.postMessage({
-                    type: 'sync',
-                    currentTime: videoEl.currentTime,
-                    playing: !videoEl.paused,
-                    src: videoEl.src,
-                    currentLyric: activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current,
-                    videoOpacity: videoOpacityRef.current
-                });
-            } else {
-                channelRef.current!.postMessage({
-                    type: 'sync',
-                    currentTime: 0,
-                    playing: false,
-                    src: null,
-                    currentLyric: isBlackout || isInCutRegion ? null : activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current,
-                    videoOpacity: 0
-                });
+            
+            let sendTime = t;
+            let sendPlaying = isPlayingRef.current;
+            let sendSrc = videoEl?.src || null;
+            let sendOpacity = videoOpacityRef.current;
+
+            if (isBlackout || isInCutRegion) {
+                sendTime = 0;
+                sendPlaying = false;
+                sendSrc = null;
+                sendOpacity = 0;
+            } else if (videoEl) {
+                sendTime = videoEl.currentTime;
+                sendPlaying = !videoEl.paused;
+                sendSrc = videoEl.src;
             }
+
+            channelRef.current!.postMessage({
+                type: 'sync',
+                currentTime: sendTime,
+                playing: sendPlaying,
+                src: sendSrc,
+                currentLyric: activeLyricText,
+                lyricsSettings: lyricsSettingsRef.current,
+                invertBackground: invertBackgroundRef.current,
+                videoOpacity: sendOpacity,
+                showLyrics: showLyricsRef.current
+            });
         }, 300); // 300ms is good for lyric sync
 
         return () => clearInterval(syncInterval);
-    }, [isActive, secondWindow, isBlackout, isInCutRegion]);
+    }, [isActive, secondWindow, isBlackout, isInCutRegion, showLyrics]);
 
     // Check periodically if the window is still open
     React.useEffect(() => {

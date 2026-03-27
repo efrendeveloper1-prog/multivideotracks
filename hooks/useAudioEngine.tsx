@@ -3,170 +3,22 @@ import JSZip from 'jszip';
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
 
 // Types
-export interface CutRegion {
-    start: number; // seconds
-    end: number;   // seconds
-}
+export interface CutRegion { start: number; end: number; }
+export interface LyricBlock { id: string; text: string; startTime: number | null; endTime?: number | null; }
+export interface LyricsSettings { align: 'left' | 'center' | 'right'; position: 'top' | 'middle' | 'bottom'; fontSize: number; fontFamily: string; animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in'; }
+export interface PanelSizes { main: Record<string, number>; left: Record<string, number>; timeline: Record<string, number>; sidebar: Record<string, number>; }
+export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 } };
+export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'bottom', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'blur-in' };
 
-export interface LyricBlock {
-    id: string;
-    text: string;
-    startTime: number | null; // seconds, null if not mapped yet
-    endTime?: number | null; // seconds, null if unbounded
-}
-
-export interface LyricsSettings {
-    align: 'left' | 'center' | 'right';
-    position: 'top' | 'middle' | 'bottom';
-    fontSize: number;
-    fontFamily: string;
-    animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in';
-}
-
-export interface PanelSizes {
-    main: Record<string, number>;
-    left: Record<string, number>;
-    timeline: Record<string, number>;
-    sidebar: Record<string, number>;
-}
-
-export const DEFAULT_PANEL_SIZES: PanelSizes = {
-    main: { 'main-left': 75, 'main-right': 25 },
-    left: { 'left-top': 70, 'left-mixer': 30 },
-    timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 },
-    sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 }
-};
-
-export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = {
-    align: 'center',
-    position: 'bottom',
-    fontSize: 60,
-    fontFamily: 'Montserrat, sans-serif',
-    animation: 'blur-in'
-};
-
-export interface Track {
-    id: string;
-    name: string;
-    file: File | null;
-    buffer?: AudioBuffer;
-    volume: number;
-    muted: boolean;
-    soloed: boolean;
-    color: string;
-    isVideoAudio?: boolean; // Flag for the extracted audio from video
-    pan: number; // -1 to 1, Left to Right
-}
-
-export interface Song {
-    id: string;
-    title: string;
-    artist: string;
-    key: string;
-    bpm: number;
-    stemFiles: File[];
-    videoFile?: File | null;
-    cachedTracks?: Track[];
-    cachedDuration?: number;
-    cachedVideoDuration?: number;
-    cachedVideoOffset?: number;
-    cachedVideoEndTime?: number;
-    cachedCutRegions?: CutRegion[];
-    cachedSplitPoints?: number[];
-    cachedLyrics?: LyricBlock[];
-    cachedLyricsSettings?: LyricsSettings;
-    cachedVideoFadeIn?: number;
-    cachedVideoFadeOut?: number;
-    isPlaceholder?: boolean;
-    analysis?: AudioAnalysis | null;
-}
+export interface Track { id: string; name: string; file: File | null; buffer?: AudioBuffer; volume: number; muted: boolean; soloed: boolean; color: string; isVideoAudio?: boolean; pan: number; }
+export interface Song { id: string; title: string; artist: string; key: string; bpm: number; stemFiles: File[]; videoFile?: File | null; cachedTracks?: Track[]; cachedDuration?: number; cachedVideoDuration?: number; cachedVideoOffset?: number; cachedVideoEndTime?: number; cachedCutRegions?: CutRegion[]; cachedSplitPoints?: number[]; cachedLyrics?: LyricBlock[]; cachedLyricsSettings?: LyricsSettings; cachedVideoFadeIn?: number; cachedVideoFadeOut?: number; isPlaceholder?: boolean; analysis?: AudioAnalysis | null; }
 
 interface AudioEngineContextType {
-    tracks: Track[];
-    isPlaying: boolean;
-    currentTime: number;
-    duration: number;
-    addTrack: (file: File, name: string) => Promise<void>;
-    addVideoTrack: (file: File) => Promise<void>;
-    removeTrack: (id: string) => void;
-    clearTracks: () => void;
-    togglePlay: () => void;
-    stop: () => void;
-    seek: (time: number) => void;
-    setTrackVolume: (id: string, volume: number) => void;
-    setTrackPan: (id: string, pan: number) => void;
-    toggleTrackMute: (id: string) => void;
-    toggleTrackSolo: (id: string) => void;
-    setVideoElement: (element: HTMLVideoElement | null) => void;
-    masterVolume: number;
-    setMasterVolume: (val: number) => void;
-    videoDuration: number; // Original video duration (may be longer than audio)
-    trimVideoToAudio: () => void; // Trim video to match audio duration
-    videoOffset: number; // Horizontal offset in seconds for video sync
-    setVideoOffset: (offset: number) => void;
-    videoEndTime: number; // Timeline end position
-    setVideoEndTime: (time: number) => void;
-    videoFadeIn: number;
-    setVideoFadeIn: (val: number) => void;
-    videoFadeOut: number;
-    setVideoFadeOut: (val: number) => void;
-    videoOpacity: number;
-    cutRegions: CutRegion[];
-    setCutRegions: (regions: CutRegion[]) => void;
-    splitPoints: number[];
-    setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>;
-    addCutRegion: (region: CutRegion) => void;
-    removeCutRegion: (index: number) => void;
-    revertVideo: () => void;
-    isInCutRegion: boolean; // true when playhead is inside a cut region (gap mode)
-    // Lyrics
-    lyrics: LyricBlock[];
-    setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>;
-    addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void;
-    updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void;
-    removeLyricBlock: (id: string) => void;
-    clearLyrics: () => void;
-    lyricsSettings: LyricsSettings;
-    setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>;
-    invertBackground: boolean;
-    setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>;
-    // Resizable Panels
-    panelSizes: PanelSizes;
-    setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>;
-    layoutVersion: number;
-    // Playlist
-    playlist: Song[];
-    activeSongId: string | null;
-    addSongToPlaylist: (song: Song) => void;
-    removeSongFromPlaylist: (id: string) => void;
-    updateSongInPlaylist: (id: string, song: Song) => void;
-    loadSong: (id: string) => Promise<void>;
-    loadPreparedSong: (song: Song) => void;
-    updateActiveSongCache: () => void;
-    prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>;
-    exportPreset: () => void;
-    importPreset: (file: File) => Promise<void>;
-    // Audio analysis
-    songAnalysis: AudioAnalysis | null;
-    loadingProgress: number | null;
-    getMasterLevels: () => [number, number];
-    getTrackLevel: (id: string) => number;
-    // File Processing (new)
-    isUploading: boolean;
-    setIsUploading: (val: boolean) => void;
-    uploadMessage: string;
-    setUploadMessage: (msg: string) => void;
-    processZipFile: (file: File) => Promise<void>;
-    processVideoFile: (file: File) => Promise<void>;
+    tracks: Track[]; isPlaying: boolean; currentTime: number; duration: number; addTrack: (file: File, name: string) => Promise<void>; addVideoTrack: (file: File) => Promise<void>; removeTrack: (id: string) => void; clearTracks: () => void; togglePlay: () => void; stop: () => void; seek: (time: number) => void; setTrackVolume: (id: string, volume: number) => void; setTrackPan: (id: string, pan: number) => void; toggleTrackMute: (id: string) => void; toggleTrackSolo: (id: string) => void; setVideoElement: (element: HTMLVideoElement | null) => void; masterVolume: number; setMasterVolume: (val: number) => void; videoDuration: number; trimVideoToAudio: () => void; videoOffset: number; setVideoOffset: (offset: number) => void; videoEndTime: number; setVideoEndTime: (time: number) => void; videoFadeIn: number; setVideoFadeIn: (val: number) => void; videoFadeOut: number; setVideoFadeOut: (val: number) => void; videoOpacity: number; cutRegions: CutRegion[]; setCutRegions: (regions: CutRegion[]) => void; splitPoints: number[]; setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>; addCutRegion: (region: CutRegion) => void; removeCutRegion: (index: number) => void; revertVideo: () => void; isInCutRegion: boolean; lyrics: LyricBlock[]; setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>; addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void; updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void; removeLyricBlock: (id: string) => void; clearLyrics: () => void; lyricsSettings: LyricsSettings; setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>; invertBackground: boolean; setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>; showLyrics: boolean; setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>; panelSizes: PanelSizes; setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>; layoutVersion: number; playlist: Song[]; activeSongId: string | null; addSongToPlaylist: (song: Song) => void; removeSongFromPlaylist: (id: string) => void; updateSongInPlaylist: (id: string, song: Song) => void; loadSong: (id: string) => Promise<void>; loadPreparedSong: (song: Song) => void; updateActiveSongCache: () => void; prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>; exportPreset: () => void; importPreset: (file: File) => Promise<void>; songAnalysis: AudioAnalysis | null; loadingProgress: number | null; getMasterLevels: () => [number, number]; getTrackLevel: (id: string) => number; isUploading: boolean; setIsUploading: (val: boolean) => void; uploadMessage: string; setUploadMessage: (msg: string) => void; processZipFile: (file: File) => Promise<void>; processVideoFile: (file: File) => Promise<void>;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
-
-export const useAudioEngine = () => {
-    const context = useContext(AudioEngineContext);
-    if (!context) throw new Error('useAudioEngine must be used within AudioEngineProvider');
-    return context;
-};
+export const useAudioEngine = () => { const context = useContext(AudioEngineContext); if (!context) throw new Error('useAudioEngine must be used within AudioEngineProvider'); return context; };
 
 export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [tracks, setTracks] = useState<Track[]>([]);
@@ -174,10 +26,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [masterVolume, setMasterVolume] = useState(1);
-    const masterVolumeRef = useRef<number>(1);
     const [videoDuration, setVideoDuration] = useState(0);
-    const [videoOffset, setVideoOffset] = useState(0); // seconds offset for video sync
-    const [videoEndTime, setVideoEndTime] = useState(0); // timeline end time for video
+    const [videoOffset, setVideoOffset] = useState(0); 
+    const [videoEndTime, setVideoEndTime] = useState(0); 
     const [videoFadeIn, setVideoFadeIn] = useState(0);
     const [videoFadeOut, setVideoFadeOut] = useState(0);
     const [videoOpacity, setVideoOpacity] = useState(1);
@@ -187,6 +38,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [lyrics, setLyrics] = useState<LyricBlock[]>([]);
     const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const [invertBackground, setInvertBackground] = useState<boolean>(false);
+    const [showLyrics, setShowLyrics] = useState(true);
     const [playlist, setPlaylist] = useState<Song[]>([]);
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
@@ -197,21 +49,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('studioPanelSizes');
-            if (saved) {
-                try { 
-                    const parsed = JSON.parse(saved);
-                    // Migration: If old version was array-based, reset to defaults
-                    if (parsed.main && Array.isArray(parsed.main)) return DEFAULT_PANEL_SIZES;
-                    return parsed;
-                } catch { }
-            }
+            if (saved) { try { const parsed = JSON.parse(saved); if (parsed.main && !Array.isArray(parsed.main)) return parsed; } catch { } }
         }
         return DEFAULT_PANEL_SIZES;
     });
 
-    useEffect(() => {
-        localStorage.setItem('studioPanelSizes', JSON.stringify(panelSizes));
-    }, [panelSizes]);
+    useEffect(() => { localStorage.setItem('studioPanelSizes', JSON.stringify(panelSizes)); }, [panelSizes]);
 
     const audioContextRef = useRef<AudioContext | null>(null);
     const sourceNodesRef = useRef<Map<string, AudioBufferSourceNode>>(new Map());
@@ -237,63 +80,33 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const lyricsSettingsRef = useRef<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const activeSongIdRef = useRef<string | null>(null);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
-    const panelSizesRef = useRef<PanelSizes>(panelSizes);
+    const masterVolumeRefLocal = useRef<number>(1);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
     const trackAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
 
-    // Initialize AudioContext
     useEffect(() => {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         audioContextRef.current = new AudioCtx();
         masterGainRef.current = audioContextRef.current.createGain();
         masterGainRef.current.connect(audioContextRef.current.destination);
-
         const splitter = audioContextRef.current.createChannelSplitter(2);
         masterGainRef.current.connect(splitter);
-
-        const analyserL = audioContextRef.current.createAnalyser();
-        analyserL.fftSize = 512;
-        const analyserR = audioContextRef.current.createAnalyser();
-        analyserR.fftSize = 512;
-
-        splitter.connect(analyserL, 0);
-        splitter.connect(analyserR, 1);
-
+        const analyserL = audioContextRef.current.createAnalyser(); analyserL.fftSize = 512;
+        const analyserR = audioContextRef.current.createAnalyser(); analyserR.fftSize = 512;
+        splitter.connect(analyserL, 0); splitter.connect(analyserR, 1);
         analysersRef.current = { left: analyserL, right: analyserR };
-
-        return () => {
-            audioContextRef.current?.close();
-        };
+        return () => { audioContextRef.current?.close(); };
     }, []);
 
-    // Keep refs in sync with state
-    useEffect(() => { durationRef.current = duration; }, [duration]);
-    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-    useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
-    useEffect(() => { tracksRef.current = tracks; }, [tracks]);
-    useEffect(() => { videoDurationRef.current = videoDuration; }, [videoDuration]);
-    useEffect(() => { videoEndTimeRef.current = videoEndTime; }, [videoEndTime]);
-    useEffect(() => { videoFadeInRef.current = videoFadeIn; }, [videoFadeIn]);
-    useEffect(() => { videoFadeOutRef.current = videoFadeOut; }, [videoFadeOut]);
-    useEffect(() => { cutRegionsRef.current = cutRegions; }, [cutRegions]);
-    useEffect(() => { splitPointsRef.current = splitPoints; }, [splitPoints]);
-    useEffect(() => { lyricsRef.current = lyrics;    }, [lyrics]);
-
     useEffect(() => {
-        lyricsSettingsRef.current = lyricsSettings;
-    }, [lyricsSettings]);
+        durationRef.current = duration; isPlayingRef.current = isPlaying; videoOffsetRef.current = videoOffset;
+        tracksRef.current = tracks; videoDurationRef.current = videoDuration; videoEndTimeRef.current = videoEndTime;
+        videoFadeInRef.current = videoFadeIn; videoFadeOutRef.current = videoFadeOut; cutRegionsRef.current = cutRegions;
+        splitPointsRef.current = splitPoints; lyricsRef.current = lyrics; lyricsSettingsRef.current = lyricsSettings;
+        activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
+    }, [duration, isPlaying, videoOffset, tracks, videoDuration, videoEndTime, videoFadeIn, videoFadeOut, cutRegions, splitPoints, lyrics, lyricsSettings, activeSongId, songAnalysis]);
 
-    useEffect(() => { activeSongIdRef.current = activeSongId; }, [activeSongId]);
-    useEffect(() => { songAnalysisRef.current = songAnalysis; }, [songAnalysis]);
-    useEffect(() => { masterVolumeRef.current = masterVolume; }, [masterVolume]);
-    useEffect(() => { panelSizesRef.current = panelSizes; }, [panelSizes]);
-
-    // Master Volume Effect
-    useEffect(() => {
-        if (masterGainRef.current) {
-            masterGainRef.current.gain.value = masterVolume;
-        }
-    }, [masterVolume]);
+    useEffect(() => { masterVolumeRefLocal.current = masterVolume; if (masterGainRef.current) masterGainRef.current.gain.value = masterVolume; }, [masterVolume]);
 
     const getTrackColor = (name: string) => {
         const n = name.toLowerCase();
@@ -307,1125 +120,155 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         return '#94a3b8';
     };
 
-    // Sort helper to put guide tracks first
-    const sortTracks = (trackList: Track[]) => {
-        return [...trackList].sort((a, b) => {
-            const isGuideA = a.name.toLowerCase().includes('click') || a.name.toLowerCase().includes('guia') || a.name.toLowerCase().includes('cue') || a.name.toLowerCase().includes('guide');
-            const isGuideB = b.name.toLowerCase().includes('click') || b.name.toLowerCase().includes('guia') || b.name.toLowerCase().includes('cue') || b.name.toLowerCase().includes('guide');
-            if (isGuideA && !isGuideB) return -1;
-            if (!isGuideA && isGuideB) return 1;
-            return 0; // maintain original relative order otherwise
-        });
-    };
+    const sortTracks = (list: Track[]) => [...list].sort((a,b) => {
+        const isG = (n: string) => n.toLowerCase().match(/click|guia|cue|guide/);
+        return (isG(a.name) ? -1 : 0) - (isG(b.name) ? -1 : 0);
+    });
 
     const addTrack = useCallback(async (file: File, name: string) => {
         if (!audioContextRef.current) return;
-
         try {
-            const arrayBuffer = await file.arrayBuffer();
-            const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+            const buf = await audioContextRef.current.decodeAudioData(await file.arrayBuffer());
+            const track: Track = { id: crypto.randomUUID(), name, file, buffer: buf, volume: 1, pan: name.toLowerCase().includes('click') ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) };
+            setTracks(prev => sortTracks([...prev, track])); setDuration(prev => Math.max(prev, buf.duration));
+            if (!songAnalysisRef.current) analyzeAudio(buf).then(setSongAnalysis).catch(() => {});
+        } catch (e) { console.error("Error decoding audio", e); }
+    }, []);
 
-            const newTrack: Track = {
-                id: crypto.randomUUID(),
-                name,
-                file,
-                buffer: audioBuffer,
-                volume: 1,
-                pan: name.toLowerCase().includes('click') || name.toLowerCase().includes('guia') || name.toLowerCase().includes('guide') || name.toLowerCase().includes('cue') ? -1 : 1,
-                muted: false,
-                soloed: false,
-                color: getTrackColor(name)
-            };
-
-            setTracks(prev => sortTracks([...prev, newTrack]));
-            setDuration(prev => Math.max(prev, audioBuffer.duration));
-
-            // Run audio analysis on first audio track
-            if (!songAnalysis) {
-                analyzeAudio(audioBuffer).then(result => {
-                    setSongAnalysis(result);
-                }).catch(e => console.warn('Audio analysis failed:', e));
-            }
-        } catch (e) {
-            console.error("Error decoding audio", e);
-        }
-    }, [songAnalysis]);
-
-    const addVideoTrack = useCallback(async (videoFile: File) => {
+    const addVideoTrack = useCallback(async (file: File) => {
         if (!audioContextRef.current) return;
-
-        const url = URL.createObjectURL(videoFile);
-
-        let oldVidTrack: Track | undefined;
-        let oldVidAudioTrack: Track | undefined;
-
-        // Find existing video tracks in current state to inherit settings
-        const currentTracks = tracksRef.current;
-        oldVidTrack = currentTracks.find(t => t.name === "VIDEO TRACK");
-        oldVidAudioTrack = currentTracks.find(t => t.isVideoAudio);
-
-        // 1. Create the visual VIDEO TRACK (no buffer, for timeline thumbnails)
-        const videoTrack: Track = {
-            id: oldVidTrack ? oldVidTrack.id : crypto.randomUUID(),
-            name: "VIDEO TRACK",
-            file: videoFile,
-            buffer: undefined,
-            volume: oldVidTrack ? oldVidTrack.volume : 1,
-            pan: oldVidTrack ? oldVidTrack.pan : 1,
-            muted: oldVidTrack ? oldVidTrack.muted : true, // Default to muted
-            soloed: oldVidTrack ? oldVidTrack.soloed : false,
-            color: '#a855f7'
-        };
-
-        // 2. Create the audio track (initially without buffer)
-        let audioTrack: Track = {
-            id: oldVidAudioTrack ? oldVidAudioTrack.id : crypto.randomUUID(),
-            name: "VIDEO AUDIO",
-            file: videoFile,
-            buffer: undefined,
-            volume: oldVidAudioTrack ? oldVidAudioTrack.volume : 1,
-            pan: oldVidAudioTrack ? oldVidAudioTrack.pan : 1,
-            muted: oldVidAudioTrack ? oldVidAudioTrack.muted : true,
-            soloed: oldVidAudioTrack ? oldVidAudioTrack.soloed : false,
-            color: '#c084fc',
-            isVideoAudio: true
-        };
-
-        // Apply immediately to tracks state so UI updates right away
-        setTracks(prev => {
-            const filtered = prev.filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
-            return sortTracks([...filtered, videoTrack, audioTrack]);
-        });
-
-        // 3. Extract audio from video asynchronously
-        (async () => {
-            try {
-                const arrayBuffer = await videoFile.arrayBuffer();
-                const audioBuffer = await audioContextRef.current!.decodeAudioData(arrayBuffer);
-                
-                setTracks(prev => prev.map(t => t.id === audioTrack.id ? { ...t, buffer: audioBuffer } : t));
-                
-                // Also update playlist cache if needed
-                if (activeSongIdRef.current) {
-                    setPlaylist(pPrev => pPrev.map(s => {
-                        if (s.id === activeSongIdRef.current) {
-                            const filteredCached = (s.cachedTracks || []).filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio);
-                            const updatedAudioTrack = { ...audioTrack, buffer: audioBuffer };
-                            return {
-                                ...s,
-                                cachedTracks: sortTracks([...filteredCached, videoTrack, updatedAudioTrack])
-                            };
-                        }
-                        return s;
-                    }));
-                }
-            } catch (e) {
-                console.warn("Video audio extraction failed or no audio track found:", e);
-            }
-        })();
-
-        // 4. Get video duration
-        let newVideoDuration = 0;
-        const tempVideo = document.createElement('video');
-        tempVideo.src = url;
-
-        const durationPromise = new Promise<number>((resolve) => {
-            tempVideo.onloadedmetadata = () => {
-                newVideoDuration = tempVideo.duration;
-                setVideoDuration(tempVideo.duration);
-                setVideoEndTime(tempVideo.duration);
-                setVideoFadeIn(0);
-                setVideoFadeOut(0);
-                setDuration(prev => (prev === 0 ? tempVideo.duration : prev));
-                resolve(newVideoDuration);
-            };
-            tempVideo.onerror = () => resolve(0);
-        });
-
-        const duration = await durationPromise;
-
-        // Final cache update for duration/metadata
-        if (activeSongIdRef.current) {
-            setPlaylist(prev => prev.map(s => {
-                if (s.id === activeSongIdRef.current) {
-                    return {
-                        ...s,
-                        videoFile,
-                        cachedVideoDuration: duration,
-                        cachedVideoEndTime: duration,
-                        cachedVideoFadeIn: 0,
-                        cachedVideoFadeOut: 0,
-                    };
-                }
-                return s;
-            }));
-        }
-    }, []);
-
-    const trimVideoToAudio = useCallback(() => {
-        if (durationRef.current > 0) {
-            setVideoEndTime(durationRef.current);
-            // Also update search/playlist
-            if (activeSongIdRef.current) {
-                setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, cachedVideoEndTime: durationRef.current } : s));
-            }
-        }
-    }, []);
-
-    const clearTracks = useCallback(() => {
-        stopAudioInternal();
-        setTracks([]);
-        setDuration(0);
-        setVideoDuration(0);
-        setCurrentTime(0);
-        setSongAnalysis(null);
-        setLyrics([]);
-        pauseTimeRef.current = 0;
-        setIsPlaying(false);
+        const oldVid = tracksRef.current.find(t => t.name === "VIDEO TRACK");
+        const videoTrack: Track = { id: oldVid?.id || crypto.randomUUID(), name: "VIDEO TRACK", file, buffer: undefined, volume: oldVid?.volume || 1, pan: oldVid?.pan || 1, muted: true, soloed: false, color: '#a855f7' };
+        const audioTrack: Track = { id: crypto.randomUUID(), name: "VIDEO AUDIO", file, buffer: undefined, volume: 1, pan: 1, muted: true, soloed: false, color: '#c084fc', isVideoAudio: true };
+        setTracks(prev => sortTracks([...prev.filter(t => t.name !== "VIDEO TRACK" && !t.isVideoAudio), videoTrack, audioTrack]));
+        try { const buf = await audioContextRef.current.decodeAudioData(await file.arrayBuffer()); setTracks(prev => prev.map(t => t.id === audioTrack.id ? { ...t, buffer: buf } : t)); } catch {}
+        const v = document.createElement('video'); v.src = URL.createObjectURL(file); v.onloadedmetadata = () => { setVideoDuration(v.duration); setVideoEndTime(v.duration); setDuration(p => p === 0 ? v.duration : p); };
     }, []);
 
     const stopAudioInternal = () => {
-        sourceNodesRef.current.forEach(source => {
-            try { source.stop(); } catch (e) { }
-        });
-        sourceNodesRef.current.clear();
-        gainNodesRef.current.clear();
-        pannerNodesRef.current.clear();
-        trackAnalysersRef.current.clear();
-        // Always restore video audio gain — in case we stopped mid cut-region
-        if (audioContextRef.current) {
-            const anySolo = tracksRef.current.some(t => t.soloed);
-            tracksRef.current.forEach(track => {
-                if (track.isVideoAudio) {
-                    const gainNode = gainNodesRef.current.get(track.id);
-                    if (gainNode) {
-                        const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
-                        const targetVol = shouldLogicallyMute ? 0 : track.volume;
-                        gainNode.gain.cancelScheduledValues(audioContextRef.current!.currentTime);
-                        gainNode.gain.setTargetAtTime(targetVol, audioContextRef.current!.currentTime, 0.02);
-                    }
-                }
-            });
-        }
-        if (isInCutRegionRef.current) {
-            isInCutRegionRef.current = false;
-            setIsInCutRegion(false);
-        }
-        setVideoOpacity(1); // Reset video opacity on stop
+        sourceNodesRef.current.forEach(s => { try { s.stop(); } catch {} }); sourceNodesRef.current.clear(); gainNodesRef.current.clear(); pannerNodesRef.current.clear(); trackAnalysersRef.current.clear();
+        isInCutRegionRef.current = false; setIsInCutRegion(false); setVideoOpacity(1);
     };
 
-    const playAudio = useCallback((startOffset: number) => {
+    const playAudio = useCallback((start: number) => {
         if (!audioContextRef.current || !masterGainRef.current) return;
-
-        if (audioContextRef.current.state === 'suspended') {
-            audioContextRef.current.resume();
-        }
-
-        const anySolo = tracks.some(t => t.soloed);
-
-        tracks.forEach(track => {
-            if (!track.buffer) return; // Skip VIDEO TRACK (no buffer)
-
-            const source = audioContextRef.current!.createBufferSource();
-            source.buffer = track.buffer;
-
-            const gainNode = audioContextRef.current!.createGain();
-            const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
-            gainNode.gain.value = shouldLogicallyMute ? 0 : track.volume;
-
-            const pannerNode = audioContextRef.current!.createStereoPanner();
-            pannerNode.pan.value = track.pan !== undefined ? track.pan : 0;
-
-            const analyserNode = audioContextRef.current!.createAnalyser();
-            analyserNode.fftSize = 256;
-
-            source.connect(gainNode);
-            gainNode.connect(analyserNode);
-            analyserNode.connect(pannerNode);
-            pannerNode.connect(masterGainRef.current!);
-            let trackWhen = 0;
-            let trackOffset = startOffset;
-
-            if (track.isVideoAudio) {
-                const offsetSum = startOffset + videoOffsetRef.current;
-                if (offsetSum >= 0) {
-                    trackOffset = offsetSum;
-                } else {
-                    trackWhen = audioContextRef.current!.currentTime + Math.abs(offsetSum);
-                    trackOffset = 0;
-                }
-            }
-
-            try {
-                source.start(trackWhen, trackOffset);
-            } catch (e) {
-                console.warn("Error starting source", e);
-            }
-
-            sourceNodesRef.current.set(track.id, source);
-            gainNodesRef.current.set(track.id, gainNode);
-            pannerNodesRef.current.set(track.id, pannerNode);
-            trackAnalysersRef.current.set(track.id, analyserNode);
-
-            source.onended = () => { };
+        if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
+        const solo = tracksRef.current.some(t => t.soloed);
+        tracksRef.current.forEach(t => {
+            if (!t.buffer) return;
+            const s = audioContextRef.current!.createBufferSource(); s.buffer = t.buffer;
+            const g = audioContextRef.current!.createGain(); g.gain.value = t.muted || (solo && !t.soloed) ? 0 : t.volume;
+            const p = audioContextRef.current!.createStereoPanner(); p.pan.value = t.pan || 0;
+            const a = audioContextRef.current!.createAnalyser(); a.fftSize = 256;
+            s.connect(g); g.connect(a); a.connect(p); p.connect(masterGainRef.current!);
+            let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum); o = 0; } }
+            try { s.start(w, o); } catch {} sourceNodesRef.current.set(t.id, s); gainNodesRef.current.set(t.id, g); pannerNodesRef.current.set(t.id, p); trackAnalysersRef.current.set(t.id, a);
         });
-    }, [tracks]);
-
-    const stopAudio = useCallback(() => {
-        stopAudioInternal();
     }, []);
 
     const togglePlay = useCallback(() => {
-        if (isPlayingRef.current) {
-            stopAudioInternal();
-            pauseTimeRef.current = currentTime;
-            if (videoRef.current) videoRef.current.pause();
-            cancelAnimationFrame(animationFrameRef.current!);
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-        } else {
-            let start = pauseTimeRef.current;
-            if (start >= durationRef.current && durationRef.current > 0) {
-                start = 0;
-                pauseTimeRef.current = 0;
-            }
-
-            playAudio(start);
-            startTimeRef.current = audioContextRef.current!.currentTime - start;
-
-            if (videoRef.current) {
-                const videoStartOffset = start + videoOffsetRef.current;
-                if (videoStartOffset >= 0) {
-                    videoRef.current.currentTime = videoStartOffset;
-                    videoRef.current.play().catch(e => console.error("Video play failed", e));
-                } else {
-                    videoRef.current.currentTime = 0;
-                    // Don't play yet, wait for update loop
-                }
-            }
-
+        if (isPlayingRef.current) { stopAudioInternal(); pauseTimeRef.current = currentTime; videoRef.current?.pause(); cancelAnimationFrame(animationFrameRef.current!); setIsPlaying(false); }
+        else {
+            let start = pauseTimeRef.current >= durationRef.current ? 0 : pauseTimeRef.current;
+            playAudio(start); startTimeRef.current = audioContextRef.current!.currentTime - start;
+            if (videoRef.current) { const vPos = start + videoOffsetRef.current; if (vPos >= 0) { videoRef.current.currentTime = vPos; videoRef.current.play().catch(() => {}); } else videoRef.current.currentTime = 0; }
             setIsPlaying(true);
-            isPlayingRef.current = true;
-
             const update = () => {
-                if (!isPlayingRef.current) return; // Guard: if stopped externally
-
-                const now = audioContextRef.current?.currentTime;
-                if (now === undefined) return;
-                const calculatedTime = now - startTimeRef.current;
-                const dur = durationRef.current;
-
-                // Absolute-position cut regions OR past videoEndTime/videoDuration
-                const isPastVideoEnd = calculatedTime >= videoEndTimeRef.current;
-                const videoTimelinePos = calculatedTime + videoOffsetRef.current;
-                const isPastVideoFile = videoTimelinePos >= videoDurationRef.current;
-                
-                const activeCut = cutRegionsRef.current.find(
-                    r => calculatedTime >= r.start && calculatedTime < r.end
-                );
-
-                const shouldBeInactive = !!activeCut || isPastVideoEnd || isPastVideoFile || videoTimelinePos < 0;
-
-                // Calculate video opacity based on fades
-                let opacity = 1;
-                if (shouldBeInactive) {
-                    opacity = 0;
-                } else {
-                    const videoStart = Math.max(0, -videoOffsetRef.current);
-                    const videoEnd = videoEndTimeRef.current;
-                    const fadeIn = videoFadeInRef.current;
-                    const fadeOut = videoFadeOutRef.current;
-
-                    if (fadeIn > 0 && calculatedTime < videoStart + fadeIn) {
-                        opacity = Math.max(0, (calculatedTime - videoStart) / fadeIn);
-                    } else if (fadeOut > 0 && calculatedTime > videoEnd - fadeOut) {
-                        opacity = Math.max(0, (videoEnd - calculatedTime) / fadeOut);
-                    }
-                }
-                setVideoOpacity(opacity);
-
-                if (shouldBeInactive) {
-                    // Mute video audio gain
-                    if (!isInCutRegionRef.current) {
-                        isInCutRegionRef.current = true;
-                        setIsInCutRegion(true);
-                        if (audioContextRef.current) {
-                            tracksRef.current.forEach(track => {
-                                if (track.isVideoAudio) {
-                                    const gainNode = gainNodesRef.current.get(track.id);
-                                    if (gainNode) {
-                                        gainNode.gain.cancelScheduledValues(audioContextRef.current!.currentTime);
-                                        gainNode.gain.setTargetAtTime(0, audioContextRef.current!.currentTime, 0.02);
-                                    }
-                                }
-                            });
-                        }
-                        // Pause video
-                        if (videoRef.current && !videoRef.current.paused) {
-                            videoRef.current.pause();
-                        }
-                    }
-                } else {
-                    // Restore audio volume following the fade opacity
-                    if (audioContextRef.current) {
-                        const anySolo = tracksRef.current.some(t => t.soloed);
-                        tracksRef.current.forEach(track => {
-                            if (track.isVideoAudio) {
-                                const gainNode = gainNodesRef.current.get(track.id);
-                                if (gainNode) {
-                                    const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
-                                    const targetVol = shouldLogicallyMute ? 0 : track.volume * opacity;
-                                    gainNode.gain.cancelScheduledValues(audioContextRef.current!.currentTime);
-                                    gainNode.gain.setTargetAtTime(targetVol, audioContextRef.current!.currentTime, 0.02);
-                                }
-                            }
-                        });
-                    }
-
-                    if (isInCutRegionRef.current) {
-                        isInCutRegionRef.current = false;
-                        setIsInCutRegion(false);
-                        // Resume video
-                        if (videoRef.current) {
-                            if (videoTimelinePos >= 0 && videoTimelinePos < videoDurationRef.current) {
-                                videoRef.current.currentTime = videoTimelinePos;
-                                videoRef.current.play().catch(() => { });
-                            }
-                        }
-                    }
-                }
-
-                if (videoRef.current && videoRef.current.paused && isPlayingRef.current && !shouldBeInactive) {
-                    if (videoTimelinePos >= 0 && videoTimelinePos < videoDurationRef.current) {
-                        videoRef.current.currentTime = videoTimelinePos;
-                        videoRef.current.play().catch(e => console.error("Delayed video play failed", e));
-                    }
-                }
-
-                if (calculatedTime >= dur && dur > 0) {
-                    // Song ended — stop everything
-                    stopAudioInternal();
-                    if (videoRef.current) {
-                        videoRef.current.pause();
-                        videoRef.current.currentTime = Math.max(0, videoOffsetRef.current);
-                    }
-                    pauseTimeRef.current = 0;
-                    setCurrentTime(0);
-                    setIsPlaying(false);
-                    isPlayingRef.current = false;
-                    return;
-                }
-
-                setCurrentTime(calculatedTime);
-                animationFrameRef.current = requestAnimationFrame(update);
-            };
-            animationFrameRef.current = requestAnimationFrame(update);
+                const now = audioContextRef.current!.currentTime - startTimeRef.current;
+                const vNow = now + videoOffsetRef.current;
+                const cut = cutRegionsRef.current.find(r => now >= r.start && now < r.end);
+                const hasV = tracksRef.current.some(t => t.isVideoAudio);
+                const inactive = !!cut || (hasV && (now >= videoEndTimeRef.current || vNow >= videoDurationRef.current || vNow < 0));
+                let op = 1; if (inactive) op = 0; else { const vStart = Math.max(0, -videoOffsetRef.current), fi = videoFadeInRef.current, fo = videoFadeOutRef.current; if (fi > 0 && now < vStart + fi) op = (now - vStart) / fi; else if (fo > 0 && now > videoEndTimeRef.current - fo) op = (videoEndTimeRef.current - now) / fo; }
+                setVideoOpacity(op);
+                if (inactive) { if (!isInCutRegionRef.current) { isInCutRegionRef.current = true; setIsInCutRegion(true); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(0, 0, 0.02); }); videoRef.current?.pause(); } }
+                else { const solo = tracksRef.current.some(t => t.soloed); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(t.muted || (solo && !t.soloed) ? 0 : t.volume * op, 0, 0.02); }); if (isInCutRegionRef.current) { isInCutRegionRef.current = false; setIsInCutRegion(false); if (videoRef.current && vNow >= 0 && vNow < videoDurationRef.current) { videoRef.current.currentTime = vNow; videoRef.current.play().catch(() => {}); } } }
+                if (now >= durationRef.current && durationRef.current > 0) { stop(); return; }
+                setCurrentTime(now); animationFrameRef.current = requestAnimationFrame(update);
+            }; animationFrameRef.current = requestAnimationFrame(update);
         }
     }, [currentTime, playAudio]);
 
-    const stop = useCallback(() => {
-        stopAudioInternal();
-        if (videoRef.current) {
-            videoRef.current.pause();
-            videoRef.current.currentTime = Math.max(0, videoOffsetRef.current);
-        }
-        pauseTimeRef.current = 0;
-        setCurrentTime(0);
-        setIsPlaying(false);
-        cancelAnimationFrame(animationFrameRef.current!);
-    }, []);
+    const stop = useCallback(() => { stopAudioInternal(); videoRef.current?.pause(); if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoOffsetRef.current); pauseTimeRef.current = 0; setCurrentTime(0); setIsPlaying(false); cancelAnimationFrame(animationFrameRef.current!); }, []);
+    const seek = useCallback((t: number) => { const was = isPlayingRef.current; if (was) stopAudioInternal(); pauseTimeRef.current = t; setCurrentTime(t); if (videoRef.current) videoRef.current.currentTime = Math.max(0, t + videoOffsetRef.current); if (was) { playAudio(t); startTimeRef.current = audioContextRef.current!.currentTime - t; if (videoRef.current && (t + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); } }, [playAudio]);
 
-    const seek = useCallback((time: number) => {
-        const wasPlaying = isPlaying;
-        if (wasPlaying) stopAudioInternal();
+    const setTrackVolume = (id: string, volume: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
+    const setTrackPan = (id: string, pan: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));
+    const toggleTrackMute = (id: string) => setTracks(prev => prev.map(t => t.id === id ? { ...t, muted: !t.muted } : t));
+    const toggleTrackSolo = (id: string) => setTracks(prev => prev.map(t => t.id === id ? { ...t, soloed: !t.soloed } : t));
+    const removeTrack = (id: string) => setTracks(prev => prev.filter(t => t.id !== id));
+    const clearTracks = useCallback(() => { stop(); setTracks([]); setDuration(0); setVideoDuration(0); setLyrics([]); setSongAnalysis(null); }, []);
+    const trimVideoToAudio = useCallback(() => { if (durationRef.current > 0) setVideoEndTime(durationRef.current); }, []);
 
-        pauseTimeRef.current = time;
-        setCurrentTime(time);
+    const addCutRegion = useCallback((r: CutRegion) => setCutRegions(prev => [...prev, r].sort((a,b) => a.start - b.start)), []);
+    const removeCutRegion = (i: number) => setCutRegions(prev => prev.filter((_, idx) => idx !== i));
+    const revertVideo = () => { setCutRegions([]); setSplitPoints([]); setVideoFadeIn(0); setVideoFadeOut(0); };
 
-        if (videoRef.current) {
-            const videoStartOffset = time + videoOffsetRef.current;
-            if (videoStartOffset >= 0) {
-                videoRef.current.currentTime = videoStartOffset;
-            } else {
-                videoRef.current.currentTime = 0;
-                if (wasPlaying) videoRef.current.pause();
-            }
-        }
-
-        if (wasPlaying) {
-            playAudio(time);
-            startTimeRef.current = audioContextRef.current!.currentTime - time;
-            if (videoRef.current && (time + videoOffsetRef.current) >= 0) {
-                videoRef.current.play().catch(e => console.error("Seek play failed", e));
-            }
-        }
-    }, [isPlaying, playAudio]);
-
-    // Live Volume/Mute/Solo updates
-    useEffect(() => {
-        const anySolo = tracks.some(t => t.soloed);
-
-        tracks.forEach(track => {
-            const shouldLogicallyMute = track.muted || (anySolo && !track.soloed);
-            const targetVolume = shouldLogicallyMute ? 0 : track.volume;
-
-            if (track.name === "VIDEO TRACK" && videoRef.current) {
-                videoRef.current.volume = targetVolume * masterVolume;
-                videoRef.current.muted = shouldLogicallyMute;
-            } else {
-                const gainNode = gainNodesRef.current.get(track.id);
-                if (gainNode && audioContextRef.current) {
-                    gainNode.gain.cancelScheduledValues(audioContextRef.current.currentTime);
-                    gainNode.gain.setTargetAtTime(targetVolume, audioContextRef.current.currentTime, 0.05);
-                }
-            }
-
-            const pannerNode = pannerNodesRef.current.get(track.id);
-            if (pannerNode && audioContextRef.current && track.pan !== undefined) {
-                pannerNode.pan.setTargetAtTime(track.pan, audioContextRef.current.currentTime, 0.05);
-            }
-        });
-    }, [tracks, masterVolume]);
-
-    const setTrackVolume = (id: string, volume: number) => {
-        setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
-    };
-
-    const setTrackPan = (id: string, pan: number) => {
-        setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));
-    };
-
-    const toggleTrackMute = (id: string) => {
-        setTracks(prev => prev.map(t => t.id === id ? { ...t, muted: !t.muted } : t));
-    };
-    const toggleTrackSolo = (id: string) => {
-        setTracks(prev => prev.map(t => t.id === id ? { ...t, soloed: !t.soloed } : t));
-    };
-
-    const removeTrack = (id: string) => {
-        setTracks(prev => prev.filter(t => t.id !== id));
-    };
-
-    // Cut region management
-    const addCutRegion = useCallback((region: CutRegion) => {
-        setCutRegions(prev => [...prev, { start: region.start, end: region.end }].sort((a, b) => a.start - b.start));
-    }, []);
-
-    const removeCutRegion = useCallback((index: number) => {
-        setCutRegions(prev => prev.filter((_, i) => i !== index));
-    }, []);
-
-    const revertVideo = useCallback(() => {
-        setCutRegions([]);
-        setSplitPoints([]);
-        setVideoFadeIn(0);
-        setVideoFadeOut(0);
-    }, []);
-
-    // Lyrics management
-    const addLyricBlock = useCallback((block: Omit<LyricBlock, 'id'>) => {
-        setLyrics(prev => [...prev, { ...block, id: crypto.randomUUID() }]);
-    }, []);
-
-    const updateLyricBlock = useCallback((id: string, updates: Partial<LyricBlock>) => {
-        setLyrics(prev => prev.map(lb => lb.id === id ? { ...lb, ...updates } : lb));
-    }, []);
-
-    const removeLyricBlock = useCallback((id: string) => {
-        setLyrics(prev => prev.filter(lb => lb.id !== id));
-    }, []);
-
-    const clearLyrics = useCallback(() => {
-        setLyrics([]);
-    }, []);
-
-    // Playlist management
-    const prepareSongCache = useCallback(async (song: Song, placeholderSettings?: Song): Promise<Song> => {
-        if (!audioContextRef.current) return song;
-
-        const newTracks: Track[] = [];
-        let newDuration = 0;
-        let loadedItems = 0;
-        const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
-        setLoadingProgress(0);
-
-        let newAnalysis = placeholderSettings?.analysis || song.analysis || null;
-
-        // Decode audio stems
-        for (const file of song.stemFiles) {
-            try {
-                const arrayBuffer = await file.arrayBuffer();
-                const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-                const name = file.name.replace(/\.(wav|mp3)$/i, '');
-                const oldT = placeholderSettings?.cachedTracks?.find(t => t.name === name);
-
-                if (!newAnalysis || newAnalysis.bpm === 0) {
-                    try {
-                        const analysis = await analyzeAudio(audioBuffer);
-                        if (!newAnalysis) {
-                            newAnalysis = analysis;
-                        } else if (analysis.bpm > 0) {
-                            newAnalysis.bpm = analysis.bpm;
-                        }
-                    } catch (e) {
-                        console.warn('Analysis failed for track:', name, e);
-                    }
-                }
-
-                newTracks.push({
-                    id: crypto.randomUUID(),
-                    name,
-                    file,
-                    buffer: audioBuffer,
-                    volume: oldT ? oldT.volume : 1,
-                    pan: oldT ? oldT.pan : (name.toLowerCase().includes('click') || name.toLowerCase().includes('guia') || name.toLowerCase().includes('guide') || name.toLowerCase().includes('cue') ? -1 : 1),
-                    muted: oldT ? oldT.muted : false,
-                    soloed: oldT ? oldT.soloed : false,
-                    color: getTrackColor(name)
-                });
-                newDuration = Math.max(newDuration, audioBuffer.duration);
-            } catch (e) {
-                console.error("Error decoding stem", e);
-            }
-            loadedItems++;
-            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
-        }
-
-        let newVideoDuration = 0;
-        if (song.videoFile) {
-            const url = URL.createObjectURL(song.videoFile);
-            const tempVideo = document.createElement('video');
-            tempVideo.src = url;
-            newVideoDuration = await new Promise<number>((resolve) => {
-                tempVideo.onloadedmetadata = () => resolve(tempVideo.duration);
-                tempVideo.onerror = () => resolve(0);
-            });
-
-            const oldVid = placeholderSettings?.cachedTracks?.find(t => t.name === "VIDEO TRACK");
-            newTracks.push({
-                id: crypto.randomUUID(),
-                name: "VIDEO TRACK",
-                file: song.videoFile,
-                buffer: undefined,
-                volume: oldVid ? oldVid.volume : 1,
-                pan: oldVid ? oldVid.pan : 1,
-                muted: oldVid ? oldVid.muted : true, // Default to muted
-                soloed: oldVid ? oldVid.soloed : false,
-                color: '#a855f7'
-            });
-
-            loadedItems++;
-            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
-
-            try {
-                const arrayBuffer = await song.videoFile.arrayBuffer();
-                const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer.slice(0));
-
-                const oldAudio = placeholderSettings?.cachedTracks?.find(t => t.isVideoAudio);
-                newTracks.push({
-                    id: crypto.randomUUID(),
-                    name: "VIDEO AUDIO",
-                    file: song.videoFile,
-                    buffer: audioBuffer,
-                    volume: oldAudio ? oldAudio.volume : 1,
-                    pan: oldAudio ? oldAudio.pan : 1,
-                    muted: oldAudio ? oldAudio.muted : true, // Default to muted
-                    soloed: oldAudio ? oldAudio.soloed : false,
-                    color: '#c084fc',
-                    isVideoAudio: true
-                });
-            } catch (e) {
-                console.warn("Video audio extraction failed", e);
-            }
-            loadedItems++;
-            setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
-        } else if (placeholderSettings?.cachedTracks) {
-            // Restore placeholder video tracks if zip did not contain video
-            const oldVid = placeholderSettings.cachedTracks.find(t => t.name === "VIDEO TRACK");
-            if (oldVid) newTracks.push(oldVid);
-
-            const oldAudio = placeholderSettings.cachedTracks.find(t => t.isVideoAudio);
-            if (oldAudio) newTracks.push(oldAudio);
-        }
-
-        setLoadingProgress(null);
-
-        return {
-            ...song,
-            cachedTracks: sortTracks(newTracks),
-            cachedDuration: placeholderSettings?.cachedDuration || newDuration || newVideoDuration,
-            cachedVideoDuration: placeholderSettings?.cachedVideoDuration || newVideoDuration,
-            cachedVideoOffset: placeholderSettings?.cachedVideoOffset || 0,
-            cachedVideoEndTime: placeholderSettings?.cachedVideoEndTime || newVideoDuration || newDuration,
-            cachedVideoFadeIn: placeholderSettings?.cachedVideoFadeIn || 0,
-            cachedVideoFadeOut: placeholderSettings?.cachedVideoFadeOut || 0,
-            cachedCutRegions: placeholderSettings?.cachedCutRegions || song.cachedCutRegions || [],
-            cachedSplitPoints: placeholderSettings?.cachedSplitPoints || song.cachedSplitPoints || [],
-            cachedLyrics: placeholderSettings?.cachedLyrics || song.cachedLyrics || [],
-            isPlaceholder: false,
-            analysis: newAnalysis
-        };
-    }, []);
-
-    const addSongToPlaylist = useCallback((song: Song) => {
-        setPlaylist(prev => [...prev, song]);
-    }, []);
-
-    const removeSongFromPlaylist = useCallback((id: string) => {
-        setPlaylist(prev => prev.filter(s => s.id !== id));
-    }, []);
-
-    const updateSongInPlaylist = useCallback((id: string, song: Song) => {
-        setPlaylist(prev => prev.map(s => s.id === id ? song : s));
-    }, []);
-
-    const updateActiveSongCache = useCallback(() => {
-        if (activeSongIdRef.current) {
-            setPlaylist(prev => prev.map(s => {
-                if (s.id === activeSongIdRef.current) {
-                    return {
-                        ...s,
-                        cachedTracks: tracksRef.current,
-                        cachedDuration: durationRef.current,
-                        cachedVideoDuration: videoDurationRef.current,
-                        cachedVideoOffset: videoOffsetRef.current,
-                        cachedVideoEndTime: videoEndTimeRef.current,
-                        cachedVideoFadeIn: videoFadeInRef.current,
-                        cachedVideoFadeOut: videoFadeOutRef.current,
-                        cachedCutRegions: cutRegionsRef.current,
-                        cachedSplitPoints: splitPointsRef.current,
-                        cachedLyrics: lyricsRef.current,
-                        cachedLyricsSettings: lyricsSettingsRef.current,
-                        analysis: songAnalysisRef.current
-                    };
-                }
-                return s;
-            }));
-        }
-    }, []);
-
-    const loadSong = useCallback(async (id: string) => {
-        const song = playlist.find(s => s.id === id);
-        if (!song) return;
-
-        setIsUploading(true);
-        setUploadMessage('Cargando tracks...');
-
-        // Save current state to the active song before switching
-        updateActiveSongCache();
-
-        // Stop current playback and clear tracks
-        stopAudioInternal();
-        cancelAnimationFrame(animationFrameRef.current!);
-        setIsPlaying(false);
-        setCurrentTime(0);
-        pauseTimeRef.current = 0;
-        setActiveSongId(id);
-
-        if (song.cachedTracks && song.cachedTracks.length > 0) {
-            // Restore from cache
-            setTracks(song.cachedTracks);
-            setDuration(song.cachedDuration || 0);
-            setVideoDuration(song.cachedVideoDuration || 0);
-            setVideoOffset(song.cachedVideoOffset || 0);
-            setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
-            setVideoFadeIn(song.cachedVideoFadeIn || 0);
-            setVideoFadeOut(song.cachedVideoFadeOut || 0);
-            setCutRegions(song.cachedCutRegions || []);
-            setSplitPoints(song.cachedSplitPoints || []);
-            setLyrics(song.cachedLyrics || []);
-            setLyricsSettings(song.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS);
-            setSongAnalysis(song.analysis || null);
-        } else {
-            // Fresh load
-            setDuration(0);
-            setTracks([]);
-            setVideoDuration(0);
-            setVideoOffset(0);
-            setVideoEndTime(0);
-            setVideoFadeIn(0);
-            setVideoFadeOut(0);
-            setCutRegions([]);
-            setSplitPoints([]);
-            setLyrics([]);
-            setLyricsSettings(DEFAULT_LYRICS_SETTINGS);
-            setSongAnalysis(null);
-
-            let loadedItems = 0;
-            const totalItems = song.stemFiles.length + (song.videoFile ? 2 : 0);
-            setLoadingProgress(0);
-
-            // Load all stem files
-            for (const stemFile of song.stemFiles) {
-                const trackName = stemFile.name.replace(/\.(wav|mp3)$/i, '');
-                await addTrack(stemFile, trackName);
-                loadedItems++;
-                setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
-            }
-
-            // Load video if present
-            if (song.videoFile) {
-                await addVideoTrack(song.videoFile);
-                loadedItems += 2;
-                setLoadingProgress(Math.round((loadedItems / totalItems) * 100));
-            }
-            setLoadingProgress(null);
-        }
-        setIsUploading(false);
-    }, [playlist, addTrack, addVideoTrack, updateActiveSongCache]);
-
-    const loadPreparedSong = useCallback((song: Song) => {
-        updateActiveSongCache();
-        stopAudioInternal();
-        cancelAnimationFrame(animationFrameRef.current!);
-        setIsPlaying(false);
-        setCurrentTime(0);
-        pauseTimeRef.current = 0;
-        setActiveSongId(song.id);
-
-        setTracks(song.cachedTracks || []);
-        setDuration(song.cachedDuration || 0);
-        setVideoDuration(song.cachedVideoDuration || 0);
-        setVideoOffset(song.cachedVideoOffset || 0);
-        setVideoEndTime(song.cachedVideoEndTime || song.cachedVideoDuration || song.cachedDuration || 0);
-        setVideoFadeIn(song.cachedVideoFadeIn || 0);
-        setVideoFadeOut(song.cachedVideoFadeOut || 0);
-        setCutRegions(song.cachedCutRegions || []);
-        setSplitPoints(song.cachedSplitPoints || []);
-        setLyrics(song.cachedLyrics || []);
-        setLyricsSettings(song.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS);
-        setSongAnalysis(song.analysis || null);
-    }, [updateActiveSongCache]);
+    const updateActiveSongCache = useCallback(() => { if (!activeSongIdRef.current) return; setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, cachedTracks: tracksRef.current, cachedDuration: durationRef.current, cachedVideoDuration: videoDurationRef.current, cachedVideoOffset: videoOffsetRef.current, cachedVideoEndTime: videoEndTimeRef.current, cachedVideoFadeIn: videoFadeInRef.current, cachedVideoFadeOut: videoFadeOutRef.current, cachedCutRegions: cutRegionsRef.current, cachedSplitPoints: splitPointsRef.current, cachedLyrics: lyricsRef.current, cachedLyricsSettings: lyricsSettingsRef.current, analysis: songAnalysisRef.current } : s)); }, []);
 
     const exportPreset = useCallback(() => {
-        // Prepare current state
-        const currentPlaylist = playlist.map(s => {
-            if (s.id === activeSongIdRef.current) {
-                return {
-                    ...s,
-                    cachedTracks: tracksRef.current,
-                    cachedDuration: durationRef.current,
-                    cachedVideoDuration: videoDurationRef.current,
-                    cachedVideoOffset: videoOffsetRef.current,
-                    cachedVideoEndTime: videoEndTimeRef.current,
-                    cachedVideoFadeIn: videoFadeInRef.current,
-                    cachedVideoFadeOut: videoFadeOutRef.current,
-                    cachedCutRegions: cutRegionsRef.current,
-                    cachedSplitPoints: splitPointsRef.current,
-                    cachedLyrics: lyricsRef.current,
-                    cachedLyricsSettings: lyricsSettingsRef.current,
-                    analysis: songAnalysisRef.current
-                };
-            }
-            return s;
-        });
-
-        const presetData = {
-            version: 1,
-            panelSizes: panelSizesRef.current,
-            playlist: currentPlaylist.map(song => ({
-                id: song.id,
-                title: song.title,
-                artist: song.artist,
-                key: song.key,
-                bpm: song.bpm,
-                analysis: song.analysis || null,
-                cachedDuration: song.cachedDuration,
-                cachedVideoDuration: song.cachedVideoDuration,
-                cachedVideoOffset: song.cachedVideoOffset,
-                cachedVideoEndTime: song.cachedVideoEndTime,
-                cachedVideoFadeIn: song.cachedVideoFadeIn,
-                cachedVideoFadeOut: song.cachedVideoFadeOut,
-                cachedCutRegions: song.cachedCutRegions,
-                cachedSplitPoints: song.cachedSplitPoints,
-                cachedLyrics: song.cachedLyrics,
-                cachedLyricsSettings: song.cachedLyricsSettings,
-                tracks: (song.cachedTracks || []).map(t => ({
-                    name: t.name,
-                    volume: t.volume,
-                    pan: t.pan !== undefined ? t.pan : (t.name.toLowerCase().includes('click') || t.name.toLowerCase().includes('guia') || t.name.toLowerCase().includes('guide') || t.name.toLowerCase().includes('cue') ? -1 : 1),
-                    muted: t.muted,
-                    soloed: t.soloed,
-                    color: t.color,
-                    isVideoAudio: t.isVideoAudio
-                }))
-            }))
-        };
-
-        const blob = new Blob([JSON.stringify(presetData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'multivideotrack-preset.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    }, [playlist]);
+        const p = { version: "1.0", activeSongId, playlist: playlist.map(s => ({ id: s.id, title: s.title, artist: s.artist, key: s.key, bpm: s.bpm, videoOffset: s.cachedVideoOffset, videoEndTime: s.cachedVideoEndTime, videoFadeIn: s.cachedVideoFadeIn, videoFadeOut: s.cachedVideoFadeOut, cutRegions: s.cachedCutRegions, splitPoints: s.cachedSplitPoints, lyrics: s.cachedLyrics, lyricsSettings: s.cachedLyricsSettings, tracks: (s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) })), panelSizes };
+        const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `multitrack-preset-${new Date().toISOString().split('T')[0]}.json`; a.click();
+    }, [activeSongId, playlist, panelSizes]);
 
     const importPreset = useCallback(async (file: File) => {
-        try {
-            setIsUploading(true);
-            setUploadMessage('Cargando preset...');
-            const text = await file.text();
-            const data = JSON.parse(text);
-            if (data.version !== 1 || !data.playlist) {
-                alert('Archivo de preset inválido.');
-                return;
-            }
+        try { const text = await file.text(); const p = JSON.parse(text); if (p.panelSizes) setPanelSizes(p.panelSizes); setPlaylist(p.playlist.map((ps: any) => ({ ...ps, isPlaceholder: true, stemFiles: [], cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) }))); if (p.activeSongId) setActiveSongId(p.activeSongId); } catch { alert("Error al importar."); }
+    }, []);
 
-            const newPlaylist: Song[] = data.playlist.map((pSong: any) => ({
-                id: pSong.id || crypto.randomUUID(),
-                title: pSong.title,
-                artist: pSong.artist || '',
-                key: pSong.key || '',
-                bpm: pSong.bpm || 0,
-                analysis: pSong.analysis || null,
-                stemFiles: [],
-                videoFile: null,
-                cachedDuration: pSong.cachedDuration,
-                cachedVideoDuration: pSong.cachedVideoDuration,
-                cachedVideoOffset: pSong.cachedVideoOffset,
-                cachedVideoEndTime: pSong.cachedVideoEndTime,
-                cachedVideoFadeIn: pSong.cachedVideoFadeIn || 0,
-                cachedVideoFadeOut: pSong.cachedVideoFadeOut || 0,
-                cachedCutRegions: pSong.cachedCutRegions,
-                cachedSplitPoints: pSong.cachedSplitPoints,
-                cachedLyrics: pSong.cachedLyrics || [],
-                cachedLyricsSettings: pSong.cachedLyricsSettings || DEFAULT_LYRICS_SETTINGS,
-                isPlaceholder: true,
-                cachedTracks: pSong.tracks.map((t: any) => ({
-                    id: crypto.randomUUID(),
-                    name: t.name,
-                    file: null,
-                    volume: t.volume,
-                    pan: t.pan !== undefined ? t.pan : (t.name.toLowerCase().includes('click') || t.name.toLowerCase().includes('guia') || t.name.toLowerCase().includes('guide') || t.name.toLowerCase().includes('cue') ? -1 : 1),
-                    muted: t.muted,
-                    soloed: t.soloed,
-                    color: t.color,
-                    isVideoAudio: t.isVideoAudio
-                }))
-            }));
+    const loadSong = async (id: string) => {
+        const s = playlist.find(x => x.id === id); if (!s) return;
+        stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setVideoDuration(s.cachedVideoDuration || 0); setVideoOffset(s.cachedVideoOffset || 0); setVideoEndTime(s.cachedVideoEndTime || s.cachedVideoDuration || 0); setVideoFadeIn(s.cachedVideoFadeIn || 0); setVideoFadeOut(s.cachedVideoFadeOut || 0); setCutRegions(s.cachedCutRegions || []); setSplitPoints(s.cachedSplitPoints || []); setLyrics(s.cachedLyrics || []); if (s.cachedLyricsSettings) setLyricsSettings(s.cachedLyricsSettings); setSongAnalysis(s.analysis || null); setActiveSongId(id);
+    };
 
-            stopAudioInternal();
-            setTracks([]);
-            setDuration(0);
-            setVideoDuration(0);
-            setVideoOffset(0);
-            setVideoFadeIn(0);
-            setVideoFadeOut(0);
-            setCutRegions([]);
-            setSplitPoints([]);
-            setLyrics([]);
-            setLyricsSettings(DEFAULT_LYRICS_SETTINGS);
-            setCurrentTime(0);
-            pauseTimeRef.current = 0;
-            setIsPlaying(false);
-            cancelAnimationFrame(animationFrameRef.current!);
-            setActiveSongId(null);
-            setPlaylist(newPlaylist);
-
-            // Apply panel sizes if present in the preset
-            if (data.panelSizes) {
-                setPanelSizes(data.panelSizes);
-                setLayoutVersion(v => v + 1); // Force re-render of PanelGroups
-            }
-            setIsUploading(false);
-        } catch (error) {
-            console.error('Error importing preset', error);
-            alert('Error al leer el archivo de preset.');
-            setIsUploading(false);
+    const prepareSongCache = async (s: Song, placeholder?: Song): Promise<Song> => {
+        if (!audioContextRef.current) return s;
+        const nt: Track[] = []; let nd = 0; setLoadingProgress(0);
+        for (const f of s.stemFiles) {
+            const buf = await audioContextRef.current.decodeAudioData(await f.arrayBuffer());
+            const name = f.name.replace(/\.(wav|mp3)$/i, '');
+            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: 1, pan: name.toLowerCase().includes('click') ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) });
+            nd = Math.max(nd, buf.duration); setLoadingProgress(Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100));
         }
-    }, [stopAudioInternal]);
+        setLoadingProgress(null); return { ...s, cachedTracks: sortTracks(nt), cachedDuration: nd, cachedLyrics: s.cachedLyrics || [], isPlaceholder: false };
+    };
 
-    const getMasterLevels = useCallback((): [number, number] => {
+    const addSongToPlaylist = (s: Song) => setPlaylist(prev => [...prev, s]);
+    const removeSongFromPlaylist = (id: string) => setPlaylist(prev => prev.filter(x => x.id !== id));
+    const updateSongInPlaylist = (id: string, s: Song) => setPlaylist(prev => prev.map(x => x.id === id ? s : x));
+    const loadPreparedSong = (s: Song) => { stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setActiveSongId(s.id); };
+
+    const getMasterLevels = (): [number, number] => {
         if (!analysersRef.current || !isPlayingRef.current) return [0, 0];
-        const dataL = new Float32Array(analysersRef.current.left.fftSize);
-        const dataR = new Float32Array(analysersRef.current.right.fftSize);
-        analysersRef.current.left.getFloatTimeDomainData(dataL);
-        analysersRef.current.right.getFloatTimeDomainData(dataR);
+        const dL = new Float32Array(256), dR = new Float32Array(256);
+        analysersRef.current.left.getFloatTimeDomainData(dL); analysersRef.current.right.getFloatTimeDomainData(dR);
+        let sL = 0, sR = 0; for (let i = 0; i < 256; i++) { sL += dL[i]*dL[i]; sR += dR[i]*dR[i]; }
+        return [Math.sqrt(sL/256), Math.sqrt(sR/256)];
+    };
 
-        let sumL = 0, sumR = 0;
-        for (let i = 0; i < dataL.length; i++) {
-            sumL += dataL[i] * dataL[i];
-            sumR += dataR[i] * dataR[i];
-        }
-        const rmsL = Math.sqrt(sumL / dataL.length);
-        const rmsR = Math.sqrt(sumR / dataR.length);
+    const getTrackLevel = (id: string): number => {
+        const a = trackAnalysersRef.current.get(id); if (!a || !isPlayingRef.current) return 0;
+        const d = new Float32Array(256); a.getFloatTimeDomainData(d);
+        let s = 0; for (let i = 0; i < 256; i++) s += d[i]*d[i];
+        return Math.min(1, Math.sqrt(s/256) * 6);
+    };
 
-        return [Math.min(1, rmsL * 4), Math.min(1, rmsR * 4)];
-    }, []);
-
-    const getTrackLevel = useCallback((id: string): number => {
-        if (!isPlayingRef.current) return 0;
-        const analyser = trackAnalysersRef.current.get(id);
-        if (!analyser) return 0;
-
-        const data = new Float32Array(analyser.fftSize);
-        analyser.getFloatTimeDomainData(data);
-
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-            sum += data[i] * data[i];
-        }
-        const rms = Math.sqrt(sum / data.length);
-        // Multiply by 6 for more sensitive visuals on individual channels
-        return Math.min(1, rms * 6);
-    }, []);
-
-    // File Processing logic (moved from SongList)
-    const processZipFile = useCallback(async (file: File) => {
-        try {
-            setIsUploading(true);
-            setUploadMessage('Extrayendo ZIP...');
-
-            const zip = new JSZip();
-            const contents = await zip.loadAsync(file);
-
-            const stemFiles: File[] = [];
-            let videoFile: File | undefined;
-
-            const promises: Promise<void>[] = [];
-
-            contents.forEach((relativePath, fileEntry) => {
-                if (fileEntry.dir) return;
-
-                if (relativePath.match(/\.(wav|mp3)$/i)) {
-                    promises.push(
-                        fileEntry.async('blob').then(blob => {
-                            const audioFile = new File([blob], relativePath.split('/').pop() || 'track', { type: blob.type || 'audio/mpeg' });
-                            stemFiles.push(audioFile);
-                        })
-                    );
-                } else if (relativePath.match(/\.(mp4|mov|webm|avi)$/i)) {
-                    promises.push(
-                        fileEntry.async('blob').then(blob => {
-                            videoFile = new File([blob], relativePath.split('/').pop() || 'video', { type: blob.type || 'video/mp4' });
-                        })
-                    );
-                }
-            });
-
-            await Promise.all(promises);
-
-            setUploadMessage('Preparando tracks...');
-
-            const songName = file.name.replace(/\.zip$/i, '');
-            const existingSong = playlist.find(s => s.title === songName && s.isPlaceholder);
-
-            let newSong: Song = {
-                id: existingSong ? existingSong.id : crypto.randomUUID(),
-                title: songName,
-                artist: '',
-                key: '',
-                bpm: 0,
-                stemFiles,
-                videoFile
-            };
-
-            setUploadMessage('Decodificando audio (puede tardar un momento)...');
-            newSong = await prepareSongCache(newSong, existingSong);
-
-            if (existingSong) {
-                updateSongInPlaylist(newSong.id, newSong);
-            } else {
-                addSongToPlaylist(newSong);
-            }
-
-            // If first song, auto-load it
-            if (!existingSong && playlist.filter(s => !s.isPlaceholder).length === 0) {
-                setUploadMessage('Cargando en reproductor...');
-                loadPreparedSong(newSong);
-            }
-            setIsUploading(false);
-        } catch (error) {
-            console.error('Error processing ZIP:', error);
-            alert('Error al leer el archivo ZIP.');
-            setIsUploading(false);
-        }
-    }, [playlist, prepareSongCache, updateSongInPlaylist, addSongToPlaylist, loadPreparedSong]);
-
-    const processVideoFile = useCallback(async (file: File) => {
-        setIsUploading(true);
-        setUploadMessage('Procesando video...');
-        await addVideoTrack(file);
-        setIsUploading(false);
-    }, [addVideoTrack]);
+    const processZipFile = async (file: File) => {
+        setIsUploading(true); setUploadMessage('Extrayendo ZIP...');
+        const zip = new JSZip(), contents = await zip.loadAsync(file), stems: File[] = []; let vid: File | undefined;
+        const ps: Promise<void>[] = [];
+        contents.forEach((path, entry) => {
+            if (entry.dir) return;
+            if (path.match(/\.(wav|mp3)$/i)) ps.push(entry.async('blob').then(b => { stems.push(new File([b], path.split('/').pop() || 't', { type: 'audio/mpeg' })); }));
+            else if (path.match(/\.(mp4|mov|webm|avi)$/i)) ps.push(entry.async('blob').then(b => { vid = new File([b], path.split('/').pop() || 'v', { type: 'video/mp4' }); }));
+        });
+        await Promise.all(ps);
+        const song = await prepareSongCache({ id: crypto.randomUUID(), title: file.name.replace('.zip',''), artist: '', key: '', bpm: 0, stemFiles: stems, videoFile: vid });
+        addSongToPlaylist(song); loadPreparedSong(song); setIsUploading(false);
+    };
 
     return (
         <AudioEngineContext.Provider value={{
-            tracks,
-            isPlaying,
-            currentTime,
-            duration,
-            addTrack,
-            addVideoTrack,
-            removeTrack,
-            clearTracks,
-            togglePlay,
-            stop,
-            seek,
-            setTrackVolume,
-            setTrackPan,
-            toggleTrackMute,
-            toggleTrackSolo,
-            setVideoElement: (el) => {
-                videoRef.current = el;
-                if (el) el.loop = false;
-            },
-            masterVolume,
-            setMasterVolume,
-            playlist,
-            activeSongId,
-            addSongToPlaylist,
-            removeSongFromPlaylist,
-            updateSongInPlaylist,
-            loadSong,
-            loadPreparedSong,
-            updateActiveSongCache,
-            prepareSongCache,
-            exportPreset,
-            importPreset,
-            videoDuration,
-            trimVideoToAudio,
-            videoOffset,
-            setVideoOffset,
-            videoEndTime,
-            setVideoEndTime,
-            videoFadeIn,
-            setVideoFadeIn,
-            videoFadeOut,
-            setVideoFadeOut,
-            videoOpacity,
-            cutRegions,
-            setCutRegions,
-            splitPoints,
-            setSplitPoints,
-            addCutRegion,
-            removeCutRegion,
-            revertVideo,
-            isInCutRegion,
-            lyrics,
-            setLyrics,
-            addLyricBlock,
-            updateLyricBlock,
-            removeLyricBlock,
-            clearLyrics,
-            lyricsSettings,
-            setLyricsSettings,
-            invertBackground,
-            setInvertBackground,
-            panelSizes,
-            setPanelSizes,
-            layoutVersion,
-            loadingProgress,
-            songAnalysis,
-            getMasterLevels,
-            getTrackLevel,
-            isUploading,
-            setIsUploading,
-            uploadMessage,
-            setUploadMessage,
-            processZipFile,
-            processVideoFile
+            tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }
         }}>
             {children}
         </AudioEngineContext.Provider>
