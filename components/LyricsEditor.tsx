@@ -138,10 +138,32 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                         onChange={e => setLyricsSettings({...lyricsSettings, animation: e.target.value as any})}
                                         title="Animación de Entrada"
                                     >
-                                        <option value="none">Sin Animación</option>
+                                        <option value="none">Sin Entrada</option>
                                         <option value="blur-in">Blur Moderno</option>
                                         <option value="slide-up">Deslizamiento</option>
                                         <option value="zoom-in">Zoom In</option>
+                                    </select>
+
+                                    <select 
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-1 py-0.5 sm:py-1 outline-none font-medium ml-1"
+                                        value={lyricsSettings.idleAnimation || 'float-pulse-shine'}
+                                        onChange={e => setLyricsSettings({...lyricsSettings, idleAnimation: e.target.value as any})}
+                                        title="Animación Durante (Loop)"
+                                    >
+                                        <option value="none">Sin Anim. Durante</option>
+                                        <option value="float-pulse-shine">Flotante + Brillo</option>
+                                        <option value="zoom-in-slow">Zoom Suave (In)</option>
+                                        <option value="zoom-out-slow">Zoom Suave (Out)</option>
+                                    </select>
+
+                                    <select 
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-1 py-0.5 sm:py-1 outline-none font-medium ml-1"
+                                        value={lyricsSettings.exitAnimation || 'slide-down-stagger'}
+                                        onChange={e => setLyricsSettings({...lyricsSettings, exitAnimation: e.target.value as any})}
+                                        title="Animación de Salida"
+                                    >
+                                        <option value="none">Sin Salida</option>
+                                        <option value="slide-down-stagger">Desplazar Abajo</option>
                                     </select>
                                 </div>
                                 <div className="flex gap-2">
