@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
+import JSZip from 'jszip';
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
 
 // Types
@@ -143,7 +144,6 @@ interface AudioEngineContextType {
     loadPreparedSong: (song: Song) => void;
     updateActiveSongCache: () => void;
     prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>;
-    // Preset
     exportPreset: () => void;
     importPreset: (file: File) => Promise<void>;
     // Audio analysis
@@ -151,6 +151,13 @@ interface AudioEngineContextType {
     loadingProgress: number | null;
     getMasterLevels: () => [number, number];
     getTrackLevel: (id: string) => number;
+    // File Processing (new)
+    isUploading: boolean;
+    setIsUploading: (val: boolean) => void;
+    uploadMessage: string;
+    setUploadMessage: (msg: string) => void;
+    processZipFile: (file: File) => Promise<void>;
+    processVideoFile: (file: File) => Promise<void>;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -184,6 +191,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [activeSongId, setActiveSongId] = useState<string | null>(null);
     const [songAnalysis, setSongAnalysis] = useState<AudioAnalysis | null>(null);
     const [loadingProgress, setLoadingProgress] = useState<number | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [uploadMessage, setUploadMessage] = useState('');
     const [layoutVersion, setLayoutVersion] = useState<number>(0);
     const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
         if (typeof window !== 'undefined') {
@@ -450,6 +459,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 }
                 return s;
             }));
+        }
+    }, []);
+
+    const trimVideoToAudio = useCallback(() => {
+        if (durationRef.current > 0) {
+            setVideoEndTime(durationRef.current);
+            // Also update search/playlist
+            if (activeSongIdRef.current) {
+                setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, cachedVideoEndTime: durationRef.current } : s));
+            }
         }
     }, []);
 
@@ -779,7 +798,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const toggleTrackMute = (id: string) => {
         setTracks(prev => prev.map(t => t.id === id ? { ...t, muted: !t.muted } : t));
     };
-
     const toggleTrackSolo = (id: string) => {
         setTracks(prev => prev.map(t => t.id === id ? { ...t, soloed: !t.soloed } : t));
     };
@@ -787,17 +805,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const removeTrack = (id: string) => {
         setTracks(prev => prev.filter(t => t.id !== id));
     };
-
-    // Trim video to match audio duration
-    const trimVideoToAudio = useCallback(() => {
-        // Recalculate duration based only on audio tracks
-        const audioTracks = tracks.filter(t => t.buffer && !t.name.includes("VIDEO"));
-        if (audioTracks.length > 0) {
-            const audioDur = Math.max(...audioTracks.map(t => t.buffer!.duration));
-            setDuration(audioDur);
-            setVideoEndTime(prev => prev === 0 ? audioDur : Math.min(prev, audioDur));
-        }
-    }, [tracks]);
 
     // Cut region management
     const addCutRegion = useCallback((region: CutRegion) => {
@@ -1001,6 +1008,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const song = playlist.find(s => s.id === id);
         if (!song) return;
 
+        setIsUploading(true);
+        setUploadMessage('Cargando tracks...');
+
         // Save current state to the active song before switching
         updateActiveSongCache();
 
@@ -1061,6 +1071,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
             setLoadingProgress(null);
         }
+        setIsUploading(false);
     }, [playlist, addTrack, addVideoTrack, updateActiveSongCache]);
 
     const loadPreparedSong = useCallback((song: Song) => {
@@ -1152,6 +1163,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const importPreset = useCallback(async (file: File) => {
         try {
+            setIsUploading(true);
+            setUploadMessage('Cargando preset...');
             const text = await file.text();
             const data = JSON.parse(text);
             if (data.version !== 1 || !data.playlist) {
@@ -1215,9 +1228,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 setPanelSizes(data.panelSizes);
                 setLayoutVersion(v => v + 1); // Force re-render of PanelGroups
             }
+            setIsUploading(false);
         } catch (error) {
             console.error('Error importing preset', error);
             alert('Error al leer el archivo de preset.');
+            setIsUploading(false);
         }
     }, [stopAudioInternal]);
 
@@ -1255,6 +1270,85 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         // Multiply by 6 for more sensitive visuals on individual channels
         return Math.min(1, rms * 6);
     }, []);
+
+    // File Processing logic (moved from SongList)
+    const processZipFile = useCallback(async (file: File) => {
+        try {
+            setIsUploading(true);
+            setUploadMessage('Extrayendo ZIP...');
+
+            const zip = new JSZip();
+            const contents = await zip.loadAsync(file);
+
+            const stemFiles: File[] = [];
+            let videoFile: File | undefined;
+
+            const promises: Promise<void>[] = [];
+
+            contents.forEach((relativePath, fileEntry) => {
+                if (fileEntry.dir) return;
+
+                if (relativePath.match(/\.(wav|mp3)$/i)) {
+                    promises.push(
+                        fileEntry.async('blob').then(blob => {
+                            const audioFile = new File([blob], relativePath.split('/').pop() || 'track', { type: blob.type || 'audio/mpeg' });
+                            stemFiles.push(audioFile);
+                        })
+                    );
+                } else if (relativePath.match(/\.(mp4|mov|webm|avi)$/i)) {
+                    promises.push(
+                        fileEntry.async('blob').then(blob => {
+                            videoFile = new File([blob], relativePath.split('/').pop() || 'video', { type: blob.type || 'video/mp4' });
+                        })
+                    );
+                }
+            });
+
+            await Promise.all(promises);
+
+            setUploadMessage('Preparando tracks...');
+
+            const songName = file.name.replace(/\.zip$/i, '');
+            const existingSong = playlist.find(s => s.title === songName && s.isPlaceholder);
+
+            let newSong: Song = {
+                id: existingSong ? existingSong.id : crypto.randomUUID(),
+                title: songName,
+                artist: '',
+                key: '',
+                bpm: 0,
+                stemFiles,
+                videoFile
+            };
+
+            setUploadMessage('Decodificando audio (puede tardar un momento)...');
+            newSong = await prepareSongCache(newSong, existingSong);
+
+            if (existingSong) {
+                updateSongInPlaylist(newSong.id, newSong);
+            } else {
+                addSongToPlaylist(newSong);
+            }
+
+            // If first song, auto-load it
+            if (!existingSong && playlist.filter(s => !s.isPlaceholder).length === 0) {
+                setUploadMessage('Cargando en reproductor...');
+                loadPreparedSong(newSong);
+            }
+            setIsUploading(false);
+        } catch (error) {
+            console.error('Error processing ZIP:', error);
+            alert('Error al leer el archivo ZIP.');
+            setIsUploading(false);
+        }
+    }, [playlist, prepareSongCache, updateSongInPlaylist, addSongToPlaylist, loadPreparedSong]);
+
+    const processVideoFile = useCallback(async (file: File) => {
+        setIsUploading(true);
+        setUploadMessage('Procesando video...');
+        await addVideoTrack(file);
+        setIsUploading(false);
+    }, [addVideoTrack]);
 
     return (
         <AudioEngineContext.Provider value={{
@@ -1325,7 +1419,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             loadingProgress,
             songAnalysis,
             getMasterLevels,
-            getTrackLevel
+            getTrackLevel,
+            isUploading,
+            setIsUploading,
+            uploadMessage,
+            setUploadMessage,
+            processZipFile,
+            processVideoFile
         }}>
             {children}
         </AudioEngineContext.Provider>
