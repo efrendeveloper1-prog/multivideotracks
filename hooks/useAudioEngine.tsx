@@ -116,6 +116,25 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     useEffect(() => { masterVolumeRefLocal.current = masterVolume; if (masterGainRef.current) masterGainRef.current.gain.value = masterVolume; }, [masterVolume]);
 
+    useEffect(() => {
+        if (!audioContextRef.current) return;
+        const anySolo = tracks.some(t => t.soloed);
+        const now = audioContextRef.current.currentTime;
+        tracks.forEach(t => {
+            const panner = pannerNodesRef.current.get(t.id);
+            if (panner) panner.pan.setTargetAtTime(t.pan || 0, now, 0.02);
+            
+            if (!t.isVideoAudio) {
+                const gain = gainNodesRef.current.get(t.id);
+                if (gain) {
+                    const targetGain = t.muted || (anySolo && !t.soloed) ? 0 : t.volume;
+                    gain.gain.setTargetAtTime(targetGain, now, 0.02);
+                }
+            }
+        });
+    }, [tracks]);
+
+
     const getTrackColor = (name: string) => {
         const n = name.toLowerCase();
         if (n.includes('drum') || n.includes('bateria')) return '#06b6d4';

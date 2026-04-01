@@ -1,4 +1,4 @@
-// File: C:\Users\Efren\Documents\Proyectos\multivideotrack\app\studio\page.tsx
+// File: D:\PROYECTOS\MULTIVIDEOTRACKS\multivideotracks\app\studio\page.tsx
 import * as entry from '../../../../app/studio/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
