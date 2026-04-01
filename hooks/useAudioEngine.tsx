@@ -156,7 +156,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (!audioContextRef.current) return;
         try {
             const buf = await audioContextRef.current.decodeAudioData(await file.arrayBuffer());
-            const track: Track = { id: crypto.randomUUID(), name, file, buffer: buf, volume: 1, pan: name.toLowerCase().includes('click') ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) };
+            const track: Track = { id: crypto.randomUUID(), name, file, buffer: buf, volume: 1, pan: name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) };
             setTracks(prev => sortTracks([...prev, track])); setDuration(prev => Math.max(prev, buf.duration));
             if (!songAnalysisRef.current) analyzeAudio(buf).then(setSongAnalysis).catch(() => {});
         } catch (e) { console.error("Error decoding audio", e); }
@@ -253,7 +253,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         for (const f of s.stemFiles) {
             const buf = await audioContextRef.current.decodeAudioData(await f.arrayBuffer());
             const name = f.name.replace(/\.(wav|mp3)$/i, '');
-            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: 1, pan: name.toLowerCase().includes('click') ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) });
+            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: 1, pan: name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) });
             nd = Math.max(nd, buf.duration); setLoadingProgress(Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100));
         }
         setLoadingProgress(null); return { ...s, cachedTracks: sortTracks(nt), cachedDuration: nd, cachedLyrics: s.cachedLyrics || [], isPlaceholder: false };

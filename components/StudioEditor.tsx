@@ -817,6 +817,7 @@ const EditorContent: React.FC = () => {
                                 src={videoSrc || undefined}
                                 className="w-full h-full object-contain"
                                 style={{ opacity: videoOpacity }}
+                                muted
                                 onTimeUpdate={(e) => {
                                     // Sycn timeline if needed - but usually controlled by loop
                                 }}
