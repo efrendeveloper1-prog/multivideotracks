@@ -234,12 +234,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const updateActiveSongCache = useCallback(() => { if (!activeSongIdRef.current) return; setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, cachedTracks: tracksRef.current, cachedDuration: durationRef.current, cachedVideoDuration: videoDurationRef.current, cachedVideoOffset: videoOffsetRef.current, cachedVideoEndTime: videoEndTimeRef.current, cachedVideoFadeIn: videoFadeInRef.current, cachedVideoFadeOut: videoFadeOutRef.current, cachedCutRegions: cutRegionsRef.current, cachedSplitPoints: splitPointsRef.current, cachedLyrics: lyricsRef.current, cachedLyricsSettings: lyricsSettingsRef.current, analysis: songAnalysisRef.current } : s)); }, []);
 
     const exportPreset = useCallback(() => {
-        const p = { version: "1.0", activeSongId, playlist: playlist.map(s => ({ id: s.id, title: s.title, artist: s.artist, key: s.key, bpm: s.bpm, videoOffset: s.cachedVideoOffset, videoEndTime: s.cachedVideoEndTime, videoFadeIn: s.cachedVideoFadeIn, videoFadeOut: s.cachedVideoFadeOut, cutRegions: s.cachedCutRegions, splitPoints: s.cachedSplitPoints, lyrics: s.cachedLyrics, lyricsSettings: s.cachedLyricsSettings, tracks: (s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) })), panelSizes };
+        const p = { version: "1.0", activeSongId, playlist: playlist.map(s => ({ id: s.id, title: s.title, artist: s.artist, key: s.key, bpm: s.bpm, analysis: s.analysis, videoOffset: s.cachedVideoOffset, videoEndTime: s.cachedVideoEndTime, videoFadeIn: s.cachedVideoFadeIn, videoFadeOut: s.cachedVideoFadeOut, cutRegions: s.cachedCutRegions, splitPoints: s.cachedSplitPoints, lyrics: s.cachedLyrics, lyricsSettings: s.cachedLyricsSettings, tracks: (s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) })), panelSizes };
         const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `multitrack-preset-${new Date().toISOString().split('T')[0]}.json`; a.click();
     }, [activeSongId, playlist, panelSizes]);
 
     const importPreset = useCallback(async (file: File) => {
-        try { const text = await file.text(); const p = JSON.parse(text); if (p.panelSizes) setPanelSizes(p.panelSizes); setPlaylist(p.playlist.map((ps: any) => ({ ...ps, isPlaceholder: true, stemFiles: [], cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) }))); if (p.activeSongId) setActiveSongId(p.activeSongId); } catch { alert("Error al importar."); }
+        try { const text = await file.text(); const p = JSON.parse(text); if (p.panelSizes) setPanelSizes(p.panelSizes); setPlaylist(p.playlist.map((ps: any) => ({ ...ps, isPlaceholder: true, stemFiles: [], analysis: ps.analysis || (ps.bpm || ps.key ? { bpm: ps.bpm || 0, key: ps.key || '', scale: '', keyDisplay: ps.key || '' } : null), cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) }))); if (p.activeSongId) setActiveSongId(p.activeSongId); } catch { alert("Error al importar."); }
     }, []);
 
     const loadSong = async (id: string) => {
@@ -256,13 +256,48 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: 1, pan: name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) });
             nd = Math.max(nd, buf.duration); setLoadingProgress(Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100));
         }
-        setLoadingProgress(null); return { ...s, cachedTracks: sortTracks(nt), cachedDuration: nd, cachedLyrics: s.cachedLyrics || [], isPlaceholder: false };
+
+        let analysis = s.analysis || undefined;
+        if (!analysis && nt.length > 0) {
+            try {
+                setUploadMessage('Analizando BPM/KEY...');
+                const mixLength = Math.max(...nt.map(t => t.buffer!.length));
+                const mixSampleRate = nt[0].buffer!.sampleRate;
+                const OfflineCtx = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+                const offlineCtx = new OfflineCtx(1, mixLength, mixSampleRate);
+                
+                let added = 0;
+                nt.forEach(t => {
+                    if (!t.name.toLowerCase().match(/click|guia|cue|guide/)) {
+                        const src = offlineCtx.createBufferSource();
+                        src.buffer = t.buffer!;
+                        src.connect(offlineCtx.destination);
+                        src.start(0);
+                        added++;
+                    }
+                });
+                
+                if (added === 0) {
+                    const src = offlineCtx.createBufferSource();
+                    src.buffer = nt[0].buffer!;
+                    src.connect(offlineCtx.destination);
+                    src.start(0);
+                }
+
+                const masterMix = await offlineCtx.startRendering();
+                analysis = await analyzeAudio(masterMix);
+            } catch(e) {
+                console.error("Audio analysis failed:", e);
+            }
+        }
+
+        setLoadingProgress(null); return { ...s, cachedTracks: sortTracks(nt), cachedDuration: nd, cachedLyrics: s.cachedLyrics || [], isPlaceholder: false, analysis: analysis || null };
     };
 
     const addSongToPlaylist = (s: Song) => setPlaylist(prev => [...prev, s]);
     const removeSongFromPlaylist = (id: string) => setPlaylist(prev => prev.filter(x => x.id !== id));
     const updateSongInPlaylist = (id: string, s: Song) => setPlaylist(prev => prev.map(x => x.id === id ? s : x));
-    const loadPreparedSong = (s: Song) => { stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setActiveSongId(s.id); };
+    const loadPreparedSong = (s: Song) => { stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setActiveSongId(s.id); setSongAnalysis(s.analysis || null); };
 
     const getMasterLevels = (): [number, number] => {
         if (!analysersRef.current || !isPlayingRef.current) return [0, 0];
