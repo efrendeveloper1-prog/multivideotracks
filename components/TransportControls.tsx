@@ -56,6 +56,7 @@ export const TransportControls: React.FC = () => {
 
     const bpmDisplay = songAnalysis?.bpm || '--';
     const keyDisplay = songAnalysis?.keyDisplay || '--';
+    const timeSigDisplay = songAnalysis?.timeSignature || '4/4';
 
     return (
         <div className="flex items-center justify-between bg-gray-800 p-2 sm:p-4 rounded-lg border border-gray-700 h-full">
@@ -131,7 +132,7 @@ export const TransportControls: React.FC = () => {
             <div className="flex-1 mx-2 sm:mx-4 bg-gray-900 p-2 rounded border border-gray-600 font-mono text-green-400 flex flex-col items-end justify-center min-w-0">
                 <div className="text-lg sm:text-2xl">{fmt(currentTime)} / {fmt(duration)}</div>
                 <div className="text-[10px] sm:text-sm text-gray-400">
-                    4/4 • {bpmDisplay} BPM
+                    {timeSigDisplay} • {bpmDisplay} BPM
                 </div>
             </div>
 

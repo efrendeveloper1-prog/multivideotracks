@@ -17,6 +17,7 @@ export interface AudioAnalysis {
     key: string;       // e.g. "C", "F#", "Bb"
     scale: string;     // "Major" or "Minor"
     keyDisplay: string; // e.g. "C Major", "F#m"
+    timeSignature?: string; // e.g. "4/4", "3/4"
 }
 
 /**
@@ -138,6 +139,66 @@ async function detectKey(buffer: AudioBuffer): Promise<{ key: string; scale: str
 }
 
 /**
+ * Heuristic to detect time signature (e.g. 4/4 vs 3/4) by analyzing 
+ * the onset autocorrelation at lags of 3 and 4 beats.
+ */
+function detectTimeSignature(buffer: AudioBuffer, bpm: number): string {
+    if (bpm <= 0) return "4/4"; // Fallback
+
+    const sampleRate = buffer.sampleRate;
+    const channelData = buffer.getChannelData(0);
+    const chunkSize = Math.floor(sampleRate / 100); // 10ms resolution
+    const numChunks = Math.floor(channelData.length / chunkSize);
+    
+    // Analyze up to 45 seconds to get a good read
+    const maxChunks = Math.min(numChunks, 4500); 
+    const envelope = new Float32Array(maxChunks);
+    
+    for (let i = 0; i < maxChunks; i++) {
+        let sum = 0;
+        const start = i * chunkSize;
+        for (let j = 0; j < chunkSize; j++) {
+            const v = channelData[start + j];
+            sum += v * v;
+        }
+        envelope[i] = Math.sqrt(sum / chunkSize);
+    }
+    
+    // Create an onset track (positive energy differences)
+    const onset = new Float32Array(maxChunks);
+    for (let i = 1; i < maxChunks; i++) {
+        onset[i] = Math.max(0, envelope[i] - envelope[i - 1]);
+    }
+    
+    const beatDurationSecs = 60 / bpm;
+    const beatLagChunks = Math.round(beatDurationSecs * 100);
+    
+    const lag3 = beatLagChunks * 3;
+    const lag4 = beatLagChunks * 4;
+    
+    // Autocorrelation function for the onset track
+    const computeOnsetAutocorr = (lag: number) => {
+        if (lag >= maxChunks || lag <= 0) return 0;
+        let p = 0;
+        for(let i = 0; i < maxChunks - lag; i++) {
+            p += onset[i] * onset[i + lag];
+        }
+        return p / (maxChunks - lag);
+    };
+    
+    const corr3 = computeOnsetAutocorr(lag3);
+    const corr4 = computeOnsetAutocorr(lag4);
+    
+    // Compare structural strength of downbeats every 3 vs 4 beats
+    // Default to 4/4 since it's the most common in modern music, 
+    // unless 3/4 is significantly stronger.
+    if (corr3 > corr4 * 1.2) {
+        return "3/4";
+    }
+    return "4/4";
+}
+
+/**
  * Pearson correlation coefficient
  */
 function correlate(a: Float64Array, b: number[]): number {
@@ -174,10 +235,13 @@ export async function analyzeAudio(buffer: AudioBuffer): Promise<AudioAnalysis> 
         detectKey(buffer)
     ]);
 
+    const timeSignature = detectTimeSignature(buffer, bpm);
+
     return {
         bpm,
         key: keyResult.key,
         scale: keyResult.scale,
-        keyDisplay: keyResult.display
+        keyDisplay: keyResult.display,
+        timeSignature
     };
 }
