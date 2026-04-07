@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAudioEngine, LyricBlock } from '@/hooks/useAudioEngine';
+import { FontPicker } from './FontPicker';
 
 interface LyricsEditorProps {
     onClose: () => void;
@@ -13,6 +14,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     const [rawText, setRawText] = useState('');
     const [isPasting, setIsPasting] = useState(lyrics.length === 0);
     const [linesPerBlock, setLinesPerBlock] = useState<1 | 2>(2);
+    const [showFontPicker, setShowFontPicker] = useState(false);
 
     const handlePasteSubmit = () => {
         if (!rawText.trim()) return;
@@ -130,21 +132,24 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                             onChange={e => setLyricsSettings({...lyricsSettings, fontSize: Number(e.target.value) || 60})}
                                         />
                                     </div>
-                                    <select 
-                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-1 py-0.5 sm:py-1 outline-none font-medium"
-                                        value={lyricsSettings.fontFamily}
-                                        onChange={e => setLyricsSettings({...lyricsSettings, fontFamily: e.target.value})}
-                                        title="Fuente"
+                                    <button
+                                        onClick={() => setShowFontPicker(true)}
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-2 py-0.5 sm:py-1 outline-none font-bold min-w-[80px]"
+                                        title="Cambiar Fuente (Google Fonts)"
                                     >
-                                        <option value="Montserrat, sans-serif">Montserrat</option>
-                                        <option value="'Montserrat', sans-serif">Montserrat Bold</option>
-                                        <option value="Bebas Neue, sans-serif">Bebas Neue</option>
-                                        <option value="Gotham, Montserrat, sans-serif">Gotham</option>
-                                        <option value="Poppins, sans-serif">Poppins</option>
-                                        <option value="'League Spartan', sans-serif">League Spartan</option>
-                                        <option value="Inter, sans-serif">Inter</option>
-                                        <option value="system-ui, sans-serif">System UI</option>
-                                    </select>
+                                        Font: {lyricsSettings.fontFamily.split(',')[0].replace(/['"]/g, '')}
+                                    </button>
+
+                                    {showFontPicker && (
+                                        <FontPicker 
+                                            currentFont={lyricsSettings.fontFamily}
+                                            onSelect={(fontName) => {
+                                                setLyricsSettings({ ...lyricsSettings, fontFamily: `'${fontName}', sans-serif` });
+                                                setShowFontPicker(false);
+                                            }}
+                                            onClose={() => setShowFontPicker(false)}
+                                        />
+                                    )}
 
                                     <select 
                                         className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-1 py-0.5 sm:py-1 outline-none font-medium ml-1"

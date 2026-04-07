@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, Suspense } from 'react';
+import { loadFont } from '@/utils/fonts';
 
 interface LyricsSettings {
     align: 'left' | 'center' | 'right';
@@ -233,6 +234,13 @@ function PresentationContent() {
             channel.close();
         };
     }, []);
+
+    // Load font when settings change
+    useEffect(() => {
+        if (lyricsSettings?.fontFamily) {
+            loadFont(lyricsSettings.fontFamily);
+        }
+    }, [lyricsSettings?.fontFamily]);
 
     // Handle lyrics transitions
     useEffect(() => {
