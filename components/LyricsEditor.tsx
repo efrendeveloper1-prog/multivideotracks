@@ -12,15 +12,16 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     } = useAudioEngine();
     const [rawText, setRawText] = useState('');
     const [isPasting, setIsPasting] = useState(lyrics.length === 0);
+    const [linesPerBlock, setLinesPerBlock] = useState<1 | 2>(2);
 
     const handlePasteSubmit = () => {
         if (!rawText.trim()) return;
         const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         
         const newBlocks: LyricBlock[] = [];
-        for (let i = 0; i < lines.length; i += 2) {
+        for (let i = 0; i < lines.length; i += linesPerBlock) {
             const line1 = lines[i];
-            const line2 = lines[i + 1] ? '\n' + lines[i + 1] : '';
+            const line2 = (linesPerBlock === 2 && lines[i + 1]) ? '\n' + lines[i + 1] : '';
             newBlocks.push({
                 id: crypto.randomUUID(),
                 text: line1 + line2,
@@ -56,10 +57,23 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                 <div className="flex-1 overflow-y-auto p-3 sm:p-4 bg-gray-900">
                     {isPasting ? (
                         <div className="flex flex-col gap-3 h-full">
-                            <label className="text-gray-300 text-xs font-bold">Pega aquí la letra completa de la canción:</label>
+                            <div className="flex justify-between items-center">
+                                <label className="text-gray-300 text-xs font-bold">Pega aquí la letra completa de la canción:</label>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-gray-400 text-xs">Agrupar en:</span>
+                                    <select 
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-[10px] sm:text-xs rounded border border-gray-700 px-2 py-1 outline-none font-medium"
+                                        value={linesPerBlock}
+                                        onChange={(e) => setLinesPerBlock(Number(e.target.value) as 1 | 2)}
+                                    >
+                                        <option value={1}>1 renglón</option>
+                                        <option value={2}>2 renglones</option>
+                                    </select>
+                                </div>
+                            </div>
                             <textarea
                                 className="flex-1 bg-gray-950 border border-gray-800 rounded p-3 text-sm text-gray-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 min-h-[200px] font-sans"
-                                placeholder="Pega el texto aquí... El sistema separará automáticamente la letra en bloques de 2 renglones."
+                                placeholder={`Pega el texto aquí... El sistema separará automáticamente la letra en bloques de ${linesPerBlock} rengl${linesPerBlock === 1 ? 'ón' : 'ones'}.`}
                                 value={rawText}
                                 onChange={(e) => setRawText(e.target.value)}
                             />
