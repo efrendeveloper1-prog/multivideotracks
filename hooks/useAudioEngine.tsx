@@ -13,10 +13,13 @@ export interface LyricsSettings {
     animation: 'none' | 'blur-in' | 'slide-up' | 'zoom-in'; 
     idleAnimation: 'none' | 'float-pulse-shine' | 'zoom-in-slow' | 'zoom-out-slow'; 
     exitAnimation: 'none' | 'slide-down-stagger'; 
+    kineticMode: 'none' | 'by-letter' | 'by-word';
+    kineticAnimation: 'wave' | 'fall-in' | 'bounce' | 'flip' | 'glitch-reveal' | 'slide-cascade';
+    kineticStagger: number;
 }
 export interface PanelSizes { main: Record<string, number>; left: Record<string, number>; timeline: Record<string, number>; sidebar: Record<string, number>; }
 export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 } };
-export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'bottom', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'blur-in', idleAnimation: 'float-pulse-shine', exitAnimation: 'slide-down-stagger' };
+export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'bottom', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'blur-in', idleAnimation: 'float-pulse-shine', exitAnimation: 'slide-down-stagger', kineticMode: 'none', kineticAnimation: 'wave', kineticStagger: 40 };
 
 export interface Track { id: string; name: string; file: File | null; buffer?: AudioBuffer; volume: number; muted: boolean; soloed: boolean; color: string; isVideoAudio?: boolean; pan: number; }
 export interface Song { id: string; title: string; artist: string; key: string; bpm: number; stemFiles: File[]; videoFile?: File | null; cachedTracks?: Track[]; cachedDuration?: number; cachedVideoDuration?: number; cachedVideoOffset?: number; cachedVideoEndTime?: number; cachedCutRegions?: CutRegion[]; cachedSplitPoints?: number[]; cachedLyrics?: LyricBlock[]; cachedLyricsSettings?: LyricsSettings; cachedVideoFadeIn?: number; cachedVideoFadeOut?: number; isPlaceholder?: boolean; analysis?: AudioAnalysis | null; }

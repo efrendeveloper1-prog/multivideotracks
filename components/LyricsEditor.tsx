@@ -179,6 +179,50 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                         <option value="none">Sin Salida</option>
                                         <option value="slide-down-stagger">Desplazar Abajo</option>
                                     </select>
+
+                                    {/* ─── Kinetic Typography ─── */}
+                                    <div className="flex items-center gap-1 ml-1 pl-1 border-l border-gray-600">
+                                        <span className="text-[9px] text-purple-400 font-bold uppercase tracking-wider hidden sm:inline">KT</span>
+                                        <select
+                                            className="bg-purple-900/40 hover:bg-purple-800/50 transition cursor-pointer text-purple-200 text-[10px] sm:text-xs rounded border border-purple-700/60 px-1 py-0.5 sm:py-1 outline-none font-medium"
+                                            value={lyricsSettings.kineticMode || 'none'}
+                                            onChange={e => setLyricsSettings({...lyricsSettings, kineticMode: e.target.value as any})}
+                                            title="Kinetic Typography: modo de animación"
+                                        >
+                                            <option value="none">Sin Kinetic</option>
+                                            <option value="by-word">Por Palabra</option>
+                                            <option value="by-letter">Por Letra</option>
+                                        </select>
+
+                                        {(lyricsSettings.kineticMode && lyricsSettings.kineticMode !== 'none') && (<>
+                                            <select
+                                                className="bg-purple-900/40 hover:bg-purple-800/50 transition cursor-pointer text-purple-200 text-[10px] sm:text-xs rounded border border-purple-700/60 px-1 py-0.5 sm:py-1 outline-none font-medium"
+                                                value={lyricsSettings.kineticAnimation || 'wave'}
+                                                onChange={e => setLyricsSettings({...lyricsSettings, kineticAnimation: e.target.value as any})}
+                                                title="Kinetic: efecto de animación"
+                                            >
+                                                <option value="wave">🌊 Wave</option>
+                                                <option value="fall-in">⬇ Fall In</option>
+                                                <option value="bounce">🏀 Bounce</option>
+                                                <option value="flip">🔄 Flip 3D</option>
+                                                <option value="glitch-reveal">⚡ Glitch</option>
+                                                <option value="slide-cascade">➡ Cascade</option>
+                                            </select>
+                                            <div className="flex items-center gap-0.5 bg-purple-900/30 rounded border border-purple-700/50 px-1 py-0.5" title="Stagger (ms entre letras/palabras)">
+                                                <span className="text-[9px] text-purple-400 hidden sm:inline">⏱</span>
+                                                <input
+                                                    type="number"
+                                                    min={10} max={300} step={5}
+                                                    className="bg-transparent text-purple-200 text-[10px] sm:text-xs outline-none w-8 text-center font-mono"
+                                                    value={lyricsSettings.kineticStagger ?? 40}
+                                                    onChange={e => setLyricsSettings({...lyricsSettings, kineticStagger: Math.max(10, Math.min(300, Number(e.target.value) || 40))})}
+                                                    title="Delay entre letras/palabras en ms"
+                                                />
+                                                <span className="text-[8px] text-purple-500 hidden sm:inline">ms</span>
+                                            </div>
+                                        </>)}
+                                    </div>
+
                                 </div>
                                 <div className="flex gap-2">
                                     <button 
