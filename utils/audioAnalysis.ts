@@ -176,14 +176,21 @@ function detectTimeSignature(buffer: AudioBuffer, bpm: number): string {
     const lag3 = beatLagChunks * 3;
     const lag4 = beatLagChunks * 4;
     
-    // Autocorrelation function for the onset track
-    const computeOnsetAutocorr = (lag: number) => {
-        if (lag >= maxChunks || lag <= 0) return 0;
-        let p = 0;
-        for(let i = 0; i < maxChunks - lag; i++) {
-            p += onset[i] * onset[i + lag];
+    // Autocorrelation function for the onset track with a small window search
+    const computeOnsetAutocorr = (baseLag: number) => {
+        let bestCorr = 0;
+        // Search a small window around the lag to account for BPM drift and sharp transient misalignment
+        for (let offset = -2; offset <= 2; offset++) {
+            const lag = baseLag + offset;
+            if (lag >= maxChunks || lag <= 0) continue;
+            let p = 0;
+            for(let i = 0; i < maxChunks - lag; i++) {
+                p += onset[i] * onset[i + lag];
+            }
+            const corr = p / (maxChunks - lag);
+            if (corr > bestCorr) bestCorr = corr;
         }
-        return p / (maxChunks - lag);
+        return bestCorr;
     };
     
     const corr3 = computeOnsetAutocorr(lag3);
@@ -192,7 +199,7 @@ function detectTimeSignature(buffer: AudioBuffer, bpm: number): string {
     // Compare structural strength of downbeats every 3 vs 4 beats
     // Default to 4/4 since it's the most common in modern music, 
     // unless 3/4 is significantly stronger.
-    if (corr3 > corr4 * 1.2) {
+    if (corr3 > corr4 * 1.4) {
         return "3/4";
     }
     return "4/4";
