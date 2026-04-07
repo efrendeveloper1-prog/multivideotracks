@@ -12,6 +12,7 @@ import { VideoTimelineTrack } from './VideoTimelineTrack';
 import { LyricsEditor } from './LyricsEditor';
 import { LyricsTimelineTrack } from './LyricsTimelineTrack';
 import { Group, Panel, Separator } from 'react-resizable-panels';
+import { LyricsRenderer } from './LyricsRenderer';
 
 const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical' }> = ({ orientation }) => {
     return (
@@ -850,30 +851,13 @@ const EditorContent: React.FC = () => {
                                   lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
                                   'bottom-6 sm:bottom-8 justify-end'}`}
                             >
-                                <div 
-                                    key={activeLyricText}
-                                    className={`w-full max-w-full space-y-0.5
-                                    ${lyricsSettings.align === 'left' ? 'text-left' :
-                                      lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}
-                                    ${lyricsSettings.animation === 'blur-in' ? 'animate-blur-in' : ''}
-                                    ${lyricsSettings.animation === 'slide-up' ? 'animate-slide-up' : ''}
-                                    ${lyricsSettings.animation === 'zoom-in' ? 'animate-zoom-in' : ''}`}
-                                >
-                                    {activeLyricText.split('\n').map((line, i) => (
-                                        <p 
-                                            key={i} 
-                                            className={`font-bold tracking-tight block px-1 ${invertBackground ? 'text-black' : 'text-white'}`}
-                                            style={{
-                                                textShadow: invertBackground ? 'none' : '0px 1px 4px rgba(0,0,0,1), 0px 0px 2px rgba(0,0,0,1)',
-                                                lineHeight: '1.2',
-                                                fontFamily: lyricsSettings.fontFamily,
-                                                fontSize: `${Math.max(10, lyricsSettings.fontSize * 0.25)}px`
-                                            }}
-                                        >
-                                            {line}
-                                        </p>
-                                    ))}
-                                </div>
+                                <LyricsRenderer 
+                                    text={activeLyricText}
+                                    settings={lyricsSettings}
+                                    invertBackground={invertBackground}
+                                    isExiting={false}
+                                    scale={0.25}
+                                />
                             </div>
                         )}
 
