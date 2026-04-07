@@ -20,6 +20,11 @@ module.exports = {
         'animate-kt-flip',
         'animate-kt-glitch-reveal',
         'animate-kt-slide-cascade',
+        'animate-kt-exit-fade',
+        'animate-kt-exit-wave',
+        'animate-kt-exit-scatter',
+        'animate-kt-exit-collapse',
+        'animate-kt-exit-blur',
     ],
     theme: {
         extend: {
@@ -98,6 +103,29 @@ module.exports = {
                     '60%':  { opacity: '1', transform: 'translateX(0.05em)' },
                     '100%': { opacity: '1', transform: 'translateX(0)' }
                 },
+                // ─── Kinetic Exit animations ──────────────────────────
+                'kt-exit-fade': {
+                    '0%':   { opacity: '1', transform: 'translateY(0)' },
+                    '100%': { opacity: '0', transform: 'translateY(0)' }
+                },
+                'kt-exit-wave': {
+                    '0%':   { opacity: '1', transform: 'translateY(0)' },
+                    '50%':  { opacity: '0.4', transform: 'translateY(-0.5em)' },
+                    '100%': { opacity: '0', transform: 'translateY(0.8em)' }
+                },
+                'kt-exit-scatter': {
+                    '0%':   { opacity: '1', transform: 'translate(0, 0) scale(1)', filter: 'blur(0)' },
+                    '100%': { opacity: '0', transform: 'translate(var(--kt-sx, 20px), var(--kt-sy, -30px)) scale(0.4)', filter: 'blur(4px)' }
+                },
+                'kt-exit-collapse': {
+                    '0%':   { opacity: '1', transform: 'scaleX(1) scaleY(1)' },
+                    '60%':  { opacity: '0.5', transform: 'scaleX(0.8) scaleY(1.2)' },
+                    '100%': { opacity: '0', transform: 'scaleX(0) scaleY(0.8)' }
+                },
+                'kt-exit-blur': {
+                    '0%':   { opacity: '1', transform: 'scale(1)',    filter: 'blur(0)' },
+                    '100%': { opacity: '0', transform: 'scale(1.15)', filter: 'blur(8px)' }
+                },
             },
             animation: {
                 'blur-in': 'blur-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards',
@@ -115,6 +143,12 @@ module.exports = {
                 'kt-flip':          'kt-flip 0.55s cubic-bezier(0.16, 1, 0.3, 1) both',
                 'kt-glitch-reveal': 'kt-glitch-reveal 0.5s ease both',
                 'kt-slide-cascade': 'kt-slide-cascade 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
+                // ─── Kinetic Exit ─────────────────────────────────────
+                'kt-exit-fade':     'kt-exit-fade 0.35s ease both',
+                'kt-exit-wave':     'kt-exit-wave 0.45s cubic-bezier(0.32, 0, 0.67, 0) both',
+                'kt-exit-scatter':  'kt-exit-scatter 0.5s cubic-bezier(0.32, 0, 0.67, 0) both',
+                'kt-exit-collapse': 'kt-exit-collapse 0.4s cubic-bezier(0.32, 0, 0.67, 0) both',
+                'kt-exit-blur':     'kt-exit-blur 0.45s ease both',
             }
         },
     },

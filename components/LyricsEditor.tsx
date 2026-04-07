@@ -199,7 +199,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                                 className="bg-purple-900/40 hover:bg-purple-800/50 transition cursor-pointer text-purple-200 text-[10px] sm:text-xs rounded border border-purple-700/60 px-1 py-0.5 sm:py-1 outline-none font-medium"
                                                 value={lyricsSettings.kineticAnimation || 'wave'}
                                                 onChange={e => setLyricsSettings({...lyricsSettings, kineticAnimation: e.target.value as any})}
-                                                title="Kinetic: efecto de animación"
+                                                title="Kinetic: efecto de animación entrada"
                                             >
                                                 <option value="wave">🌊 Wave</option>
                                                 <option value="fall-in">⬇ Fall In</option>
@@ -220,7 +220,21 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                                 />
                                                 <span className="text-[8px] text-purple-500 hidden sm:inline">ms</span>
                                             </div>
+                                            <select
+                                                className="bg-purple-900/40 hover:bg-purple-800/50 transition cursor-pointer text-purple-200 text-[10px] sm:text-xs rounded border border-purple-700/60 px-1 py-0.5 sm:py-1 outline-none font-medium"
+                                                value={lyricsSettings.kineticExitAnimation || 'wave-out'}
+                                                onChange={e => setLyricsSettings({...lyricsSettings, kineticExitAnimation: e.target.value as any})}
+                                                title="Kinetic: efecto de salida"
+                                            >
+                                                <option value="none">↩ Sin Salida</option>
+                                                <option value="fade-out">↩ Fade Out</option>
+                                                <option value="wave-out">↩ Wave Out</option>
+                                                <option value="scatter">↩ Scatter</option>
+                                                <option value="collapse">↩ Collapse</option>
+                                                <option value="blur-out">↩ Blur Out</option>
+                                            </select>
                                         </>)}
+
                                     </div>
 
                                 </div>

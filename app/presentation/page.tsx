@@ -13,6 +13,20 @@ interface LyricsSettings {
     kineticMode?: 'none' | 'by-letter' | 'by-word';
     kineticAnimation?: 'wave' | 'fall-in' | 'bounce' | 'flip' | 'glitch-reveal' | 'slide-cascade';
     kineticStagger?: number;
+    kineticExitAnimation?: 'none' | 'fade-out' | 'wave-out' | 'scatter' | 'collapse' | 'blur-out';
+}
+
+// ─── Kinetic exit animation class mapper ──────────────────────────────────────
+function getKineticExitClass(exitAnim: string | undefined): string {
+    switch (exitAnim) {
+        case 'fade-out':   return 'animate-kt-exit-fade';
+        case 'wave-out':   return 'animate-kt-exit-wave';
+        case 'scatter':    return 'animate-kt-exit-scatter';
+        case 'collapse':   return 'animate-kt-exit-collapse';
+        case 'blur-out':   return 'animate-kt-exit-blur';
+        case 'none':       return '';
+        default:           return 'animate-kt-exit-wave';
+    }
 }
 
 // ─── Kinetic Typography Unit renderer ────────────────────────────────────────
@@ -20,25 +34,34 @@ interface KineticUnitProps {
     unit: string;
     index: number;
     isSpace?: boolean;
-    animClass: string;
+    enterClass: string;
+    exitClass: string;
     staggerMs: number;
     baseStyle: React.CSSProperties;
     isExiting: boolean;
     exitDelayMs: number;
+    /** for scatter: unique random x/y offsets per unit */
+    scatterStyle?: React.CSSProperties;
 }
 
-function KineticUnit({ unit, index, isSpace, animClass, staggerMs, baseStyle, isExiting, exitDelayMs }: KineticUnitProps) {
+function KineticUnit({
+    unit, index, isSpace, enterClass, exitClass,
+    staggerMs, baseStyle, isExiting, exitDelayMs, scatterStyle
+}: KineticUnitProps) {
     if (isSpace) return <span style={{ display: 'inline-block', width: '0.3em' }} />;
+
+    const animClass = isExiting ? exitClass : enterClass;
+    const delay = isExiting ? exitDelayMs : index * staggerMs;
+
     return (
         <span
-            className={isExiting ? 'animate-exit-down' : animClass}
+            className={animClass}
             style={{
                 ...baseStyle,
+                ...(isExiting && scatterStyle ? scatterStyle : {}),
                 display: 'inline-block',
-                animationDelay: isExiting
-                    ? `${exitDelayMs}ms`
-                    : `${index * staggerMs}ms`,
-                opacity: isExiting ? 1 : 0,
+                animationDelay: `${delay}ms`,
+                opacity: isExiting ? undefined : 0,
             }}
         >
             {unit}
@@ -53,13 +76,16 @@ interface KineticLineProps {
     settings: LyricsSettings;
     invertBackground: boolean;
     isExiting: boolean;
-    /** total units in ALL previous lines (for global stagger offset) */
     globalUnitOffset: number;
+    totalUnitsInBlock: number;
 }
 
-function KineticLine({ line, lineIndex, settings, invertBackground, isExiting, globalUnitOffset }: KineticLineProps) {
+function KineticLine({
+    line, lineIndex, settings, invertBackground, isExiting, globalUnitOffset, totalUnitsInBlock
+}: KineticLineProps) {
     const mode = settings.kineticMode || 'none';
-    const animClass = `animate-kt-${settings.kineticAnimation || 'wave'}`;
+    const enterClass = `animate-kt-${settings.kineticAnimation || 'wave'}`;
+    const exitClass = getKineticExitClass(settings.kineticExitAnimation);
     const stagger = settings.kineticStagger ?? 40;
 
     const baseStyle: React.CSSProperties = {
@@ -72,7 +98,7 @@ function KineticLine({ line, lineIndex, settings, invertBackground, isExiting, g
     };
 
     if (mode === 'none') {
-        // Legacy rendering — no kinetic
+        // Legacy rendering
         return (
             <p
                 className={`font-bold tracking-tight block transition-all
@@ -101,18 +127,13 @@ function KineticLine({ line, lineIndex, settings, invertBackground, isExiting, g
         );
     }
 
-    // Kinetic mode: split into units
+    // Build units array
     const units: { text: string; isSpace: boolean }[] = [];
     if (mode === 'by-letter') {
         for (const char of line) {
-            if (char === ' ') {
-                units.push({ text: ' ', isSpace: true });
-            } else {
-                units.push({ text: char, isSpace: false });
-            }
+            units.push({ text: char === ' ' ? ' ' : char, isSpace: char === ' ' });
         }
     } else {
-        // by-word
         const words = line.split(' ');
         words.forEach((w, wi) => {
             units.push({ text: w, isSpace: false });
@@ -120,16 +141,34 @@ function KineticLine({ line, lineIndex, settings, invertBackground, isExiting, g
         });
     }
 
-    const nonSpaceCount = units.filter(u => !u.isSpace).length;
+    const nonSpaceUnits = units.filter(u => !u.isSpace);
+    const nonSpaceCount = nonSpaceUnits.length;
+
+    // Pre-compute scatter offsets deterministically (seeded by position)
+    const scatterOffsets = nonSpaceUnits.map((_, ni) => {
+        const seed = (globalUnitOffset + ni) * 137.508; // golden angle spread
+        const angle = seed % 360;
+        const dist = 30 + (seed % 40);
+        const sx = Math.round(Math.cos(angle * Math.PI / 180) * dist);
+        const sy = Math.round(Math.sin(angle * Math.PI / 180) * dist - 20);
+        return { '--kt-sx': `${sx}px`, '--kt-sy': `${sy}px` } as React.CSSProperties;
+    });
 
     return (
         <p style={{ lineHeight: '1.3', marginBottom: '0.15em' }}>
             {units.map((unit, ui) => {
-                // global index = offset from previous lines + local non-space index
                 const nonSpaceLocalIdx = units.slice(0, ui).filter(u => !u.isSpace).length;
                 const globalIdx = globalUnitOffset + nonSpaceLocalIdx;
-                // exit delay goes in reverse for dramatic effect
-                const exitDelay = (nonSpaceCount - 1 - nonSpaceLocalIdx) * (stagger * 0.6);
+
+                // Exit delay: reverse stagger from last unit to first (dramatic wave-out)
+                const reverseIdx = totalUnitsInBlock - 1 - globalIdx;
+                const exitDelay = settings.kineticExitAnimation === 'none'
+                    ? 0
+                    : reverseIdx * (stagger * 0.5);
+
+                const scatterStyle = settings.kineticExitAnimation === 'scatter'
+                    ? scatterOffsets[nonSpaceLocalIdx]
+                    : undefined;
 
                 return (
                     <KineticUnit
@@ -137,11 +176,13 @@ function KineticLine({ line, lineIndex, settings, invertBackground, isExiting, g
                         unit={unit.text}
                         index={globalIdx}
                         isSpace={unit.isSpace}
-                        animClass={animClass}
+                        enterClass={enterClass}
+                        exitClass={exitClass}
                         staggerMs={stagger}
                         baseStyle={baseStyle}
                         isExiting={isExiting}
                         exitDelayMs={exitDelay}
+                        scatterStyle={scatterStyle}
                     />
                 );
             })}
@@ -164,7 +205,6 @@ function PresentationContent() {
     useEffect(() => {
         const channel = new BroadcastChannel('second-screen-video');
         channelRef.current = channel;
-
         channel.postMessage({ type: 'ready' });
 
         channel.onmessage = (event) => {
@@ -173,38 +213,18 @@ function PresentationContent() {
 
             if (event.data.type === 'sync') {
                 if (event.data.src !== undefined && video.src !== event.data.src) {
-                    if (event.data.src) {
-                        video.src = event.data.src;
-                        video.load();
-                    } else {
-                        video.removeAttribute('src');
-                        video.load();
-                    }
+                    if (event.data.src) { video.src = event.data.src; video.load(); }
+                    else { video.removeAttribute('src'); video.load(); }
                 }
                 const drift = Math.abs(video.currentTime - event.data.currentTime);
-                if (drift > 0.5) {
-                    video.currentTime = event.data.currentTime;
-                }
-                if (event.data.playing && video.paused) {
-                    video.play().catch(() => { });
-                } else if (!event.data.playing && !video.paused) {
-                    video.pause();
-                }
-                if (event.data.currentLyric !== undefined) {
-                    setCurrentLyric(event.data.currentLyric);
-                }
-                if (event.data.lyricsSettings !== undefined) {
-                    setLyricsSettings(event.data.lyricsSettings);
-                }
-                if (event.data.invertBackground !== undefined) {
-                    setInvertBackground(event.data.invertBackground);
-                }
-                if (event.data.showLyrics !== undefined) {
-                    setShowLyrics(event.data.showLyrics);
-                }
-                if (event.data.videoOpacity !== undefined) {
-                    video.style.opacity = event.data.videoOpacity.toString();
-                }
+                if (drift > 0.5) video.currentTime = event.data.currentTime;
+                if (event.data.playing && video.paused) video.play().catch(() => {});
+                else if (!event.data.playing && !video.paused) video.pause();
+                if (event.data.currentLyric !== undefined) setCurrentLyric(event.data.currentLyric);
+                if (event.data.lyricsSettings !== undefined) setLyricsSettings(event.data.lyricsSettings);
+                if (event.data.invertBackground !== undefined) setInvertBackground(event.data.invertBackground);
+                if (event.data.showLyrics !== undefined) setShowLyrics(event.data.showLyrics);
+                if (event.data.videoOpacity !== undefined) video.style.opacity = event.data.videoOpacity.toString();
             }
         };
 
@@ -221,18 +241,24 @@ function PresentationContent() {
                 setDisplayedLyric(currentLyric);
                 setIsExiting(false);
             } else {
-                const hasExitAnim = lyricsSettings?.exitAnimation && lyricsSettings.exitAnimation !== 'none';
                 const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
-                if (hasExitAnim || isKinetic) {
+                const kineticExit = lyricsSettings?.kineticExitAnimation;
+                const hasKineticExit = isKinetic && kineticExit && kineticExit !== 'none';
+                const hasClassicExit = lyricsSettings?.exitAnimation && lyricsSettings.exitAnimation !== 'none';
+
+                if (hasKineticExit || hasClassicExit) {
                     setIsExiting(true);
                     if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
-                    // Give kinetic exit animations time based on stagger
-                    const stagger = lyricsSettings?.kineticStagger ?? 40;
-                    const lineCount = displayedLyric.split('\n').length;
-                    const charCount = displayedLyric.replace(/\s/g, '').length;
-                    const exitDur = isKinetic
-                        ? Math.min(800, charCount * stagger * 0.5 + 300)
-                        : 550;
+
+                    let exitDur = 550; // classic exit default
+                    if (hasKineticExit && displayedLyric) {
+                        const stagger = lyricsSettings?.kineticStagger ?? 40;
+                        const unitCount = lyricsSettings?.kineticMode === 'by-letter'
+                            ? displayedLyric.replace(/\s/g, '').length
+                            : displayedLyric.trim().split(/\s+/).filter(Boolean).length;
+                        exitDur = Math.min(900, unitCount * stagger * 0.5 + 350);
+                    }
+
                     exitTimeoutRef.current = setTimeout(() => {
                         setDisplayedLyric(currentLyric);
                         setIsExiting(false);
@@ -247,23 +273,27 @@ function PresentationContent() {
 
     const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
 
+    // Pre-compute total non-space units in current block (for reverse exit stagger)
+    const totalUnitsInBlock = (() => {
+        if (!displayedLyric || !isKinetic) return 0;
+        if (lyricsSettings?.kineticMode === 'by-letter') {
+            return displayedLyric.replace(/\s/g, '').length;
+        }
+        return displayedLyric.trim().split(/\s+/).filter(Boolean).length;
+    })();
+
     return (
         <div
             className={`w-screen h-screen flex items-center justify-center overflow-hidden cursor-none transition-colors duration-500 ${invertBackground ? 'bg-white' : 'bg-black'}`}
             onDoubleClick={() => {
                 if (!document.fullscreenElement) {
-                    document.documentElement.requestFullscreen().catch(() => { });
+                    document.documentElement.requestFullscreen().catch(() => {});
                 } else {
-                    document.exitFullscreen().catch(() => { });
+                    document.exitFullscreen().catch(() => {});
                 }
             }}
         >
-            <video
-                ref={videoRef}
-                className="w-full h-full object-contain"
-                playsInline
-                muted
-            />
+            <video ref={videoRef} className="w-full h-full object-contain" playsInline muted />
 
             {/* Lyrics Overlay */}
             {showLyrics && displayedLyric && lyricsSettings && (
@@ -273,7 +303,7 @@ function PresentationContent() {
                       'bottom-[10vh] justify-end'}`}
                 >
                     {isKinetic ? (
-                        // ── KINETIC MODE: letter/word by letter/word ──────────────
+                        // ── KINETIC MODE ──────────────────────────────────────
                         <div
                             key={displayedLyric}
                             className={`w-full max-w-6xl mx-auto
@@ -281,31 +311,29 @@ function PresentationContent() {
                                   lyricsSettings.align === 'right' ? 'text-right' : 'text-center'}`}
                         >
                             {displayedLyric.split('\n').map((line, lineIdx, allLines) => {
-                                // compute global unit offset = sum of non-space units in previous lines
                                 let globalOffset = 0;
                                 for (let i = 0; i < lineIdx; i++) {
                                     const prev = allLines[i];
-                                    if (lyricsSettings.kineticMode === 'by-letter') {
-                                        globalOffset += prev.replace(/\s/g, '').length;
-                                    } else {
-                                        globalOffset += prev.trim().split(/\s+/).filter(Boolean).length;
-                                    }
+                                    globalOffset += lyricsSettings.kineticMode === 'by-letter'
+                                        ? prev.replace(/\s/g, '').length
+                                        : prev.trim().split(/\s+/).filter(Boolean).length;
                                 }
                                 return (
                                     <KineticLine
-                                        key={lineIdx}
+                                        key={`${displayedLyric}-${lineIdx}`}
                                         line={line}
                                         lineIndex={lineIdx}
                                         settings={lyricsSettings}
                                         invertBackground={invertBackground}
                                         isExiting={isExiting}
                                         globalUnitOffset={globalOffset}
+                                        totalUnitsInBlock={totalUnitsInBlock}
                                     />
                                 );
                             })}
                         </div>
                     ) : (
-                        // ── CLASSIC MODE: block animation ─────────────────────────
+                        // ── CLASSIC MODE ──────────────────────────────────────
                         <div
                             key={displayedLyric}
                             className={`w-full max-w-6xl space-y-1 sm:space-y-2 md:space-y-4 mx-auto
