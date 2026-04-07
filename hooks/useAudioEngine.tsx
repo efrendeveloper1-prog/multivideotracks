@@ -265,27 +265,40 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const mixSampleRate = nt[0].buffer!.sampleRate;
                 const OfflineCtx = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
                 const offlineCtx = new OfflineCtx(1, mixLength, mixSampleRate);
+                const clickCtx = new OfflineCtx(1, mixLength, mixSampleRate);
                 
                 let added = 0;
+                let addedClick = 0;
                 nt.forEach(t => {
-                    if (!t.name.toLowerCase().match(/click|guia|cue|guide/)) {
+                    const isClick = !!t.name.toLowerCase().match(/click|guia|cue|guide/);
+                    if (!isClick) {
                         const src = offlineCtx.createBufferSource();
                         src.buffer = t.buffer!;
                         src.connect(offlineCtx.destination);
                         src.start(0);
                         added++;
+                    } else {
+                        const srcClick = clickCtx.createBufferSource();
+                        srcClick.buffer = t.buffer!;
+                        srcClick.connect(clickCtx.destination);
+                        srcClick.start(0);
+                        addedClick++;
                     }
                 });
                 
                 if (added === 0) {
                     const src = offlineCtx.createBufferSource();
-                    src.buffer = nt[0].buffer!;
+                    src.buffer = nt.find(t => !!t.name.toLowerCase().match(/click|guia|cue|guide/))?.buffer || nt[0].buffer!;
                     src.connect(offlineCtx.destination);
                     src.start(0);
                 }
 
                 const masterMix = await offlineCtx.startRendering();
-                analysis = await analyzeAudio(masterMix);
+                let rhythmMix = masterMix;
+                if (addedClick > 0) {
+                    rhythmMix = await clickCtx.startRendering();
+                }
+                analysis = await analyzeAudio(masterMix, rhythmMix);
             } catch(e) {
                 console.error("Audio analysis failed:", e);
             }

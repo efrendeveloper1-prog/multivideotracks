@@ -226,16 +226,14 @@ function toFlat(note: string): string {
     return map[note] || note;
 }
 
-/**
- * Perform full audio analysis (BPM + Key) on an AudioBuffer.
- */
-export async function analyzeAudio(buffer: AudioBuffer): Promise<AudioAnalysis> {
+export async function analyzeAudio(buffer: AudioBuffer, rhythmBuffer?: AudioBuffer): Promise<AudioAnalysis> {
+    const rBuffer = rhythmBuffer || buffer;
     const [bpm, keyResult] = await Promise.all([
-        detectBPM(buffer),
+        detectBPM(rBuffer),
         detectKey(buffer)
     ]);
 
-    const timeSignature = detectTimeSignature(buffer, bpm);
+    const timeSignature = detectTimeSignature(rBuffer, bpm);
 
     return {
         bpm,
