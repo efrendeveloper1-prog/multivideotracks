@@ -53,7 +53,7 @@ function KineticUnit({
     unit, index, isSpace, enterClass, exitClass,
     staggerMs, baseStyle, isExiting, exitDelayMs, scatterStyle
 }: KineticUnitProps) {
-    if (isSpace) return <span style={{ display: 'inline-block', width: '0.3em' }} />;
+    if (isSpace) return <span style={{ display: 'inline-block', width: '0.35em', fontSize: baseStyle.fontSize }} />;
 
     const animClass = isExiting ? exitClass : enterClass;
     const delay = isExiting ? exitDelayMs : index * staggerMs;
