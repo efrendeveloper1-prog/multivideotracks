@@ -91,6 +91,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const lyricsRef = useRef<LyricBlock[]>([]);
     const lyricsSettingsRef = useRef<LyricsSettings>(DEFAULT_LYRICS_SETTINGS);
     const activeSongIdRef = useRef<string | null>(null);
+    const playlistRef = useRef<Song[]>([]);
     const songAnalysisRef = useRef<AudioAnalysis | null>(null);
     const masterVolumeRefLocal = useRef<number>(1);
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
@@ -116,7 +117,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         videoFadeInRef.current = videoFadeIn; videoFadeOutRef.current = videoFadeOut; cutRegionsRef.current = cutRegions;
         splitPointsRef.current = splitPoints; lyricsRef.current = lyrics; lyricsSettingsRef.current = lyricsSettings;
         activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
-    }, [duration, isPlaying, videoOffset, tracks, videoDuration, videoEndTime, videoFadeIn, videoFadeOut, cutRegions, splitPoints, lyrics, lyricsSettings, activeSongId, songAnalysis]);
+        playlistRef.current = playlist;
+    }, [duration, isPlaying, videoOffset, tracks, videoDuration, videoEndTime, videoFadeIn, videoFadeOut, cutRegions, splitPoints, lyrics, lyricsSettings, activeSongId, songAnalysis, playlist]);
 
     useEffect(() => { masterVolumeRefLocal.current = masterVolume; if (masterGainRef.current) masterGainRef.current.gain.value = masterVolume; }, [masterVolume]);
 
@@ -238,12 +240,73 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const updateActiveSongCache = useCallback(() => { if (!activeSongIdRef.current) return; setPlaylist(prev => prev.map(s => s.id === activeSongIdRef.current ? { ...s, cachedTracks: tracksRef.current, cachedDuration: durationRef.current, cachedVideoDuration: videoDurationRef.current, cachedVideoOffset: videoOffsetRef.current, cachedVideoEndTime: videoEndTimeRef.current, cachedVideoFadeIn: videoFadeInRef.current, cachedVideoFadeOut: videoFadeOutRef.current, cachedCutRegions: cutRegionsRef.current, cachedSplitPoints: splitPointsRef.current, cachedLyrics: lyricsRef.current, cachedLyricsSettings: lyricsSettingsRef.current, analysis: songAnalysisRef.current } : s)); }, []);
 
     const exportPreset = useCallback(() => {
-        const p = { version: "1.0", activeSongId, playlist: playlist.map(s => ({ id: s.id, title: s.title, artist: s.artist, key: s.key, bpm: s.bpm, analysis: s.analysis, videoOffset: s.cachedVideoOffset, videoEndTime: s.cachedVideoEndTime, videoFadeIn: s.cachedVideoFadeIn, videoFadeOut: s.cachedVideoFadeOut, cutRegions: s.cachedCutRegions, splitPoints: s.cachedSplitPoints, lyrics: s.cachedLyrics, lyricsSettings: s.cachedLyricsSettings, tracks: (s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) })), panelSizes };
+        const p = { 
+            version: "1.0", 
+            activeSongId, 
+            playlist: playlist.map(s => {
+                // If it's the active song, we grab current live refs to ensure latest edits are saved
+                const isAct = s.id === activeSongIdRef.current;
+                return {
+                    id: s.id, 
+                    title: s.title, 
+                    artist: s.artist, 
+                    key: s.key, 
+                    bpm: s.bpm, 
+                    analysis: isAct ? songAnalysisRef.current : s.analysis, 
+                    videoDuration: isAct ? videoDurationRef.current : s.cachedVideoDuration, 
+                    videoOffset: isAct ? videoOffsetRef.current : s.cachedVideoOffset, 
+                    videoEndTime: isAct ? videoEndTimeRef.current : s.cachedVideoEndTime, 
+                    videoFadeIn: isAct ? videoFadeInRef.current : s.cachedVideoFadeIn, 
+                    videoFadeOut: isAct ? videoFadeOutRef.current : s.cachedVideoFadeOut, 
+                    cutRegions: isAct ? cutRegionsRef.current : s.cachedCutRegions, 
+                    splitPoints: isAct ? splitPointsRef.current : s.cachedSplitPoints, 
+                    lyrics: isAct ? lyricsRef.current : s.cachedLyrics, 
+                    lyricsSettings: isAct ? lyricsSettingsRef.current : s.cachedLyricsSettings, 
+                    tracks: (isAct ? tracksRef.current : s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) 
+                };
+            }), 
+            panelSizes 
+        };
         const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `multitrack-preset-${new Date().toISOString().split('T')[0]}.json`; a.click();
     }, [activeSongId, playlist, panelSizes]);
 
     const importPreset = useCallback(async (file: File) => {
-        try { const text = await file.text(); const p = JSON.parse(text); if (p.panelSizes) setPanelSizes(p.panelSizes); setPlaylist(p.playlist.map((ps: any) => ({ ...ps, isPlaceholder: true, stemFiles: [], analysis: ps.analysis || (ps.bpm || ps.key ? { bpm: ps.bpm || 0, key: ps.key || '', scale: '', keyDisplay: ps.key || '' } : null), cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) }))); if (p.activeSongId) setActiveSongId(p.activeSongId); } catch { alert("Error al importar."); }
+        try { 
+            const text = await file.text(); const p = JSON.parse(text); if (p.panelSizes) setPanelSizes(p.panelSizes); 
+            
+            setPlaylist(prev => {
+                const newPlaylist = [...prev];
+                p.playlist.forEach((ps: any) => {
+                    const existingIndex = newPlaylist.findIndex(existing => existing.title === ps.title);
+                    const newSongObj = { 
+                        ...ps, 
+                        isPlaceholder: true, 
+                        stemFiles: [], 
+                        cachedVideoDuration: ps.videoDuration,
+                        cachedVideoOffset: ps.videoOffset,
+                        cachedVideoEndTime: ps.videoEndTime,
+                        cachedVideoFadeIn: ps.videoFadeIn,
+                        cachedVideoFadeOut: ps.videoFadeOut,
+                        cachedCutRegions: ps.cutRegions,
+                        cachedSplitPoints: ps.splitPoints,
+                        cachedLyrics: ps.lyrics,
+                        cachedLyricsSettings: ps.lyricsSettings,
+                        analysis: ps.analysis || (ps.bpm || ps.key ? { bpm: ps.bpm || 0, key: ps.key || '', scale: '', keyDisplay: ps.key || '' } : null), 
+                        cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) 
+                    };
+                    
+                    if (existingIndex !== -1) {
+                        // Merge or replace the existing one
+                        newPlaylist[existingIndex] = { ...newPlaylist[existingIndex], ...newSongObj, stemFiles: newPlaylist[existingIndex].stemFiles, videoFile: newPlaylist[existingIndex].videoFile, isPlaceholder: newPlaylist[existingIndex].isPlaceholder };
+                    } else {
+                        newPlaylist.push(newSongObj);
+                    }
+                });
+                return newPlaylist;
+            });
+            
+            if (p.activeSongId) setActiveSongId(p.activeSongId); 
+        } catch { alert("Error al importar."); }
     }, []);
 
     const loadSong = async (id: string) => {
@@ -257,11 +320,22 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         for (const f of s.stemFiles) {
             const buf = await audioContextRef.current.decodeAudioData(await f.arrayBuffer());
             const name = f.name.replace(/\.(wav|mp3)$/i, '');
-            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: 1, pan: name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1, muted: false, soloed: false, color: getTrackColor(name) });
+            
+            let vol = 1; let pan = name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1;
+            let mute = false; let solo = false;
+            
+            if (placeholder && placeholder.cachedTracks) {
+                const pt = placeholder.cachedTracks.find(t => t.name === name);
+                if (pt) {
+                    vol = pt.volume; pan = pt.pan; mute = pt.muted; solo = pt.soloed;
+                }
+            }
+
+            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: vol, pan, muted: mute, soloed: solo, color: getTrackColor(name) });
             nd = Math.max(nd, buf.duration); setLoadingProgress(Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100));
         }
 
-        let analysis = s.analysis || undefined;
+        let analysis = placeholder?.analysis || s.analysis || undefined;
         if (!analysis && nt.length > 0) {
             try {
                 setUploadMessage('Analizando BPM/KEY...');
@@ -308,13 +382,44 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
         }
 
-        setLoadingProgress(null); return { ...s, cachedTracks: sortTracks(nt), cachedDuration: nd, cachedLyrics: s.cachedLyrics || [], isPlaceholder: false, analysis: analysis || null };
+        setLoadingProgress(null); 
+        return { 
+            ...s, 
+            cachedTracks: sortTracks(nt), 
+            cachedDuration: nd, 
+            cachedLyrics: placeholder?.cachedLyrics || s.cachedLyrics || [], 
+            cachedLyricsSettings: placeholder?.cachedLyricsSettings || s.cachedLyricsSettings || undefined,
+            cachedVideoDuration: placeholder?.cachedVideoDuration || s.cachedVideoDuration || undefined,
+            cachedVideoOffset: placeholder?.cachedVideoOffset || s.cachedVideoOffset || undefined,
+            cachedVideoEndTime: placeholder?.cachedVideoEndTime || s.cachedVideoEndTime || undefined,
+            cachedVideoFadeIn: placeholder?.cachedVideoFadeIn || s.cachedVideoFadeIn || undefined,
+            cachedVideoFadeOut: placeholder?.cachedVideoFadeOut || s.cachedVideoFadeOut || undefined,
+            cachedCutRegions: placeholder?.cachedCutRegions || s.cachedCutRegions || [],
+            cachedSplitPoints: placeholder?.cachedSplitPoints || s.cachedSplitPoints || [],
+            isPlaceholder: false, 
+            analysis: analysis || null 
+        };
     };
 
     const addSongToPlaylist = (s: Song) => setPlaylist(prev => [...prev, s]);
     const removeSongFromPlaylist = (id: string) => setPlaylist(prev => prev.filter(x => x.id !== id));
     const updateSongInPlaylist = (id: string, s: Song) => setPlaylist(prev => prev.map(x => x.id === id ? s : x));
-    const loadPreparedSong = (s: Song) => { stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setActiveSongId(s.id); setSongAnalysis(s.analysis || null); };
+    const loadPreparedSong = (s: Song) => { 
+        stop(); 
+        setTracks(s.cachedTracks || []); 
+        setDuration(s.cachedDuration || 0); 
+        setVideoDuration(s.cachedVideoDuration || 0); 
+        setVideoOffset(s.cachedVideoOffset || 0); 
+        setVideoEndTime(s.cachedVideoEndTime || s.cachedVideoDuration || 0); 
+        setVideoFadeIn(s.cachedVideoFadeIn || 0); 
+        setVideoFadeOut(s.cachedVideoFadeOut || 0); 
+        setCutRegions(s.cachedCutRegions || []); 
+        setSplitPoints(s.cachedSplitPoints || []); 
+        setLyrics(s.cachedLyrics || []); 
+        if (s.cachedLyricsSettings) setLyricsSettings(s.cachedLyricsSettings); 
+        setActiveSongId(s.id); 
+        setSongAnalysis(s.analysis || null); 
+    };
 
     const getMasterLevels = (): [number, number] => {
         if (!analysersRef.current || !isPlayingRef.current) return [0, 0];
@@ -341,8 +446,30 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             else if (path.match(/\.(mp4|mov|webm|avi)$/i)) ps.push(entry.async('blob').then(b => { vid = new File([b], path.split('/').pop() || 'v', { type: 'video/mp4' }); }));
         });
         await Promise.all(ps);
-        const song = await prepareSongCache({ id: crypto.randomUUID(), title: file.name.replace('.zip',''), artist: '', key: '', bpm: 0, stemFiles: stems, videoFile: vid });
-        addSongToPlaylist(song); loadPreparedSong(song); setIsUploading(false);
+        
+        const title = file.name.replace('.zip','');
+        const existingSong = playlistRef.current?.find(s => s.title.toLowerCase() === title.toLowerCase());
+        
+        let newSongData: Song = { 
+            id: existingSong ? existingSong.id : crypto.randomUUID(), 
+            title: existingSong ? existingSong.title : title, 
+            artist: existingSong?.artist || '', 
+            key: existingSong?.key || '', 
+            bpm: existingSong?.bpm || 0, 
+            stemFiles: stems, 
+            videoFile: vid 
+        };
+
+        const song = await prepareSongCache(newSongData, existingSong);
+        
+        if (existingSong) {
+            updateSongInPlaylist(song.id, song);
+        } else {
+            addSongToPlaylist(song);
+        }
+        
+        loadPreparedSong(song); 
+        setIsUploading(false);
     };
 
     return (
