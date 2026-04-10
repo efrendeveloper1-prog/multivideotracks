@@ -235,9 +235,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                             if (loopStatusRef.current.loopsRemaining !== 'infinite') {
                                 loopStatusRef.current.loopsRemaining--;
                             }
-                            lastLoopTriggerTimeRef.current = activeLoopSection.start; // The newly sought time
-                            setTimeout(() => { seek(activeLoopSection.start); }, 0); // Trigger seek
-                            return; // Stop current frame update
+                            // Seek immediately and re-start the frame so playhead keeps moving
+                            seek(activeLoopSection.start);
+                            lastLoopTriggerTimeRef.current = activeLoopSection.start;
+                            animationFrameRef.current = requestAnimationFrame(update);
+                            return;
                         }
                     }
                 }
