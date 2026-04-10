@@ -35,6 +35,7 @@ const EditorContent: React.FC = () => {
         videoFadeOut, setVideoFadeOut,
         videoOpacity,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
+        sections, setSections,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
         invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion
     } = useAudioEngine();
@@ -46,6 +47,7 @@ const EditorContent: React.FC = () => {
 
     // Edit mode state
     const [editMode, setEditMode] = useState(false);
+    const [editingSection, setEditingSection] = useState<{ id?: string, start: number, end: number, color: string, label: string, loopMode: 'none' | 'infinite' | 'custom', loopCount: number } | null>(null);
     // Which segment is currently selected (index into the array of gaps between boundaries)
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
@@ -688,6 +690,29 @@ const EditorContent: React.FC = () => {
 
                             {/* Master Waveform */}
                             <Panel id="tl-master" minSize={15} className="relative flex flex-col shrink-0 min-h-[40px]">
+                                {/* SECTION MARKERS */}
+                                <div className="w-full relative h-5 bg-gray-900 border-b border-gray-800 shrink-0 cursor-crosshair group z-20"
+                                     onDoubleClick={(e) => {
+                                        if (duration <= 0) return;
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const t = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1) * duration;
+                                        setEditingSection({ start: t, end: Math.min(t + 4, duration), color: '#3b82f6', label: 'V1', loopMode: 'none', loopCount: 0 });
+                                     }}
+                                     title="Doble clic para añadir sección de bucle"
+                                >
+                                    {duration > 0 && sections.map(s => (
+                                        <div key={s.id}
+                                             className="absolute top-0 bottom-0 border-r border-black/50 text-[10px] font-bold text-black flex items-center justify-center px-1 overflow-hidden whitespace-nowrap cursor-pointer hover:brightness-110 shadow-sm transition-all"
+                                             style={{ left: `${(s.start / duration) * 100}%`, width: `${((s.end - s.start) / duration) * 100}%`, backgroundColor: s.color }}
+                                             onClick={(e) => { e.stopPropagation(); setEditingSection(s); }}
+                                             title={`${s.label} (${s.loopMode !== 'none' ? (s.loopMode === 'infinite' ? '∞' : `vueltas: ${s.loopCount}`) : 'Sin bucle'}) - Clic para editar`}
+                                        >
+                                            <span className="bg-black/20 px-1 rounded-sm backdrop-blur-sm text-white/90 drop-shadow-md">
+                                                {s.label} {s.loopMode !== 'none' && <span className="text-[8px] ml-0.5 opacity-80">🔄</span>}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                                 <div className="w-full relative h-full bg-gray-950 flex-1">
                                     {masterBuffer ? (
                                         <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
@@ -896,6 +921,75 @@ const EditorContent: React.FC = () => {
 
             {/* Modals */}
             {showLyricsEditor && <LyricsEditor onClose={() => setShowLyricsEditor(false)} />}
+            
+            {editingSection && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="bg-gray-800 border border-gray-700 p-4 rounded shadow-2xl w-80 text-white">
+                        <h3 className="text-sm font-bold mb-4">{editingSection.id ? 'Editar Sección' : 'Nueva Sección'}</h3>
+                        
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Nombre (ej. Verse 1)</label>
+                                <input type="text" className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={editingSection.label} onChange={e => setEditingSection({...editingSection, label: e.target.value})} />
+                            </div>
+                            
+                            <div className="flex gap-2">
+                                <div className="flex-1">
+                                    <label className="block text-xs text-gray-400 mb-1">Inicio (s)</label>
+                                    <input type="number" step="0.1" className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={editingSection.start.toFixed(1)} onChange={e => setEditingSection({...editingSection, start: parseFloat(e.target.value) || 0})} />
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-xs text-gray-400 mb-1">Fin (s)</label>
+                                    <input type="number" step="0.1" className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={editingSection.end.toFixed(1)} onChange={e => setEditingSection({...editingSection, end: parseFloat(e.target.value) || 0})} />
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Color</label>
+                                <input type="color" className="w-full h-8 bg-gray-900 border border-gray-700 rounded cursor-pointer" value={editingSection.color} onChange={e => setEditingSection({...editingSection, color: e.target.value})} />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-xs text-gray-400 mb-1">Modo de Bucle</label>
+                                <select className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={editingSection.loopMode} onChange={e => setEditingSection({...editingSection, loopMode: e.target.value as any})}>
+                                    <option value="none">Sin Bucle (Continuar)</option>
+                                    <option value="infinite">Infinito</option>
+                                    <option value="custom">Número específico de veces</option>
+                                </select>
+                            </div>
+                            
+                            {editingSection.loopMode === 'custom' && (
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-1">Cantidad de repeticiones (ej. 2 vueltas extra)</label>
+                                    <input type="number" min="1" className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={editingSection.loopCount} onChange={e => setEditingSection({...editingSection, loopCount: parseInt(e.target.value) || 1})} />
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="mt-5 flex gap-2 justify-end">
+                            {editingSection.id && (
+                                <button className="bg-red-900/50 hover:bg-red-800 text-red-300 px-3 py-1 rounded text-xs font-bold mr-auto transition-colors"
+                                    onClick={() => {
+                                        setSections(prev => prev.filter(s => s.id !== editingSection.id));
+                                        setEditingSection(null);
+                                    }}
+                                >Eliminar</button>
+                            )}
+                            <button className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs font-bold transition-colors" onClick={() => setEditingSection(null)}>Cancelar</button>
+                            <button className="bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-xs font-bold transition-colors"
+                                onClick={() => {
+                                    if (editingSection.id) {
+                                        setSections(prev => prev.map(s => s.id === editingSection.id ? { ...editingSection, id: s.id } as any : s));
+                                    } else {
+                                        setSections(prev => [...prev, { ...editingSection, id: crypto.randomUUID() } as any]);
+                                    }
+                                    setEditingSection(null);
+                                }}
+                            >Guardar</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
