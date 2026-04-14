@@ -55,6 +55,8 @@ const EditorContent: React.FC = () => {
     const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const [zoomLevel, setZoomLevel] = useState(1);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
 
     const activeLyricBlock = useMemo(() => {
@@ -226,6 +228,49 @@ const EditorContent: React.FC = () => {
             window.removeEventListener('mouseup', handleMouseUp);
         };
     }, [resizingFade, duration, videoEndTime, videoOffset, setVideoFadeIn, setVideoFadeOut]);
+
+    // Handle timeline wheel zoom
+    useEffect(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+
+        const handleWheelNative = (e: WheelEvent) => {
+            if (duration <= 0) return;
+            
+            // Zoom on vertical wheel or Ctrl+Wheel
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX) || e.ctrlKey) {
+                e.preventDefault(); 
+                
+                const zoomDelta = e.deltaY < 0 ? 1.15 : (1 / 1.15); // scroll up = zoom in
+                
+                setZoomLevel(prev => {
+                    const next = Math.max(1, Math.min(prev * zoomDelta, 30));
+                    if (next === prev) return prev;
+                    
+                    const container = scrollContainerRef.current;
+                    if (container) {
+                        const rect = container.getBoundingClientRect();
+                        const pointerX = e.clientX - rect.left;
+                        const currentScrollLeft = container.scrollLeft;
+                        const pointerAbsoluteX = pointerX + currentScrollLeft;
+                        const oldContentWidth = container.scrollWidth;
+                        const ratio = pointerAbsoluteX / oldContentWidth;
+
+                        requestAnimationFrame(() => {
+                            if (scrollContainerRef.current) {
+                                const newWidth = scrollContainerRef.current.scrollWidth;
+                                scrollContainerRef.current.scrollLeft = newWidth * ratio - pointerX;
+                            }
+                        });
+                    }
+                    return next;
+                });
+            }
+        };
+
+        el.addEventListener('wheel', handleWheelNative, { passive: false });
+        return () => el.removeEventListener('wheel', handleWheelNative);
+    }, [duration]);
 
     // Handle section dragging/resizing
     useEffect(() => {
@@ -532,13 +577,8 @@ const EditorContent: React.FC = () => {
 
                     {/* Timeline Area */}
                     <div
-                        ref={timelineRef}
                         className={`bg-gray-900 mb-1 sm:mb-2 rounded border flex flex-col relative shrink-0 select-none h-full min-h-0 overflow-hidden
-                            ${editMode
-                                ? 'border-blue-700 cursor-pointer'
-                                : 'border-gray-700 cursor-crosshair'
-                            }`}
-                        onClick={handleTimelineClick}
+                            ${editMode ? 'border-blue-700' : 'border-gray-700'}`}
                     >
 
                         {/* Trim Video Warning */}
@@ -554,13 +594,26 @@ const EditorContent: React.FC = () => {
                             </div>
                         )}
 
-                        <Group 
-                            key={`tl-${layoutVersion}-${tlPanelsCount}`}
-                            orientation="vertical" 
-                            className="flex-1 w-full"
-                            onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, timeline: sizes }))}
-                            defaultLayout={panelSizes.timeline}
+                        {/* Zoom/Scroll Container */}
+                        <div 
+                            ref={scrollContainerRef}
+                            className="flex-1 w-full flex flex-col overflow-x-auto overflow-y-hidden custom-scrollbar"
+                            style={{ scrollbarWidth: 'thin', scrollbarColor: '#4b5563 #111827' }}
                         >
+                            <div
+                                ref={timelineRef}
+                                className={`flex-1 flex flex-col relative min-h-0 ${editMode ? 'cursor-pointer' : 'cursor-crosshair'}`}
+                                style={{ width: `${zoomLevel * 100}%`, minWidth: '100%' }}
+                                onClick={handleTimelineClick}
+                            >
+
+                                <Group 
+                                    key={`tl-${layoutVersion}-${tlPanelsCount}`}
+                                    orientation="vertical" 
+                                    className="flex-1 w-full"
+                                    onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, timeline: sizes }))}
+                                    defaultLayout={panelSizes.timeline}
+                                >
                             {/* Lyrics Panel */}
                             {hasLyrics && (
                                 <>
@@ -893,6 +946,8 @@ const EditorContent: React.FC = () => {
                             className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none"
                             style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                         />
+                            </div>
+                        </div>
                     </div>
                             </Panel>
                             
