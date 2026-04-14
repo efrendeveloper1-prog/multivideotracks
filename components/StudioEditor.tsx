@@ -51,6 +51,7 @@ const EditorContent: React.FC = () => {
     // Which segment is currently selected (index into the array of gaps between boundaries)
     const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null);
     const [draggingBoundary, setDraggingBoundary] = useState<{ index: number, startX: number, initialTime: number, initialCutRegions: typeof cutRegions } | null>(null);
+    const [draggingSection, setDraggingSection] = useState<{ id: string, startX: number, initialStart: number, initialEnd: number, type: 'move' | 'resize-left' | 'resize-right' } | null>(null);
     const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const timelineRef = useRef<HTMLDivElement>(null);
@@ -225,6 +226,50 @@ const EditorContent: React.FC = () => {
             window.removeEventListener('mouseup', handleMouseUp);
         };
     }, [resizingFade, duration, videoEndTime, videoOffset, setVideoFadeIn, setVideoFadeOut]);
+
+    // Handle section dragging/resizing
+    useEffect(() => {
+        if (!draggingSection) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!timelineRef.current || duration <= 0) return;
+            const rect = timelineRef.current.getBoundingClientRect();
+            const deltaX = e.clientX - draggingSection.startX;
+            const deltaTime = (deltaX / rect.width) * duration;
+            
+            setSections(prev => prev.map(s => {
+                if (s.id !== draggingSection.id) return s;
+                let newStart = draggingSection.initialStart;
+                let newEnd = draggingSection.initialEnd;
+                
+                if (draggingSection.type === 'move') {
+                    newStart = Math.max(0, draggingSection.initialStart + deltaTime);
+                    const dur = draggingSection.initialEnd - draggingSection.initialStart;
+                    newEnd = newStart + dur;
+                    if (newEnd > duration) {
+                        newEnd = duration;
+                        newStart = duration - dur;
+                    }
+                } else if (draggingSection.type === 'resize-left') {
+                    newStart = Math.max(0, Math.min(draggingSection.initialStart + deltaTime, s.end - 0.1));
+                } else if (draggingSection.type === 'resize-right') {
+                    newEnd = Math.min(duration, Math.max(s.start + 0.1, draggingSection.initialEnd + deltaTime));
+                }
+                return { ...s, start: newStart, end: newEnd };
+            }));
+        };
+
+        const handleMouseUp = () => {
+            setDraggingSection(null);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [draggingSection, duration, setSections]);
 
     // Handle video track edge resizing
     useEffect(() => {
@@ -689,9 +734,19 @@ const EditorContent: React.FC = () => {
                             )}
 
                             {/* Master Waveform */}
-                            <Panel id="tl-master" minSize={15} className="relative flex flex-col shrink-0 min-h-[40px]">
+                            <Panel id="tl-master" minSize={15} className="relative flex flex-col shrink-0 min-h-[40px] overflow-hidden bg-gray-950">
+                                {/* FULL HEIGHT SECTION BACKGROUNDS */}
+                                <div className="absolute inset-0 z-[15] pointer-events-none">
+                                    {duration > 0 && sections.map(s => (
+                                        <div key={`bg-${s.id}`} 
+                                             className="absolute top-0 bottom-0 opacity-60 transition-all pointer-events-none"
+                                             style={{ left: `${(s.start / duration) * 100}%`, width: `${((s.end - s.start) / duration) * 100}%`, backgroundColor: s.color }}
+                                        />
+                                    ))}
+                                </div>
+
                                 {/* SECTION MARKERS */}
-                                <div className="w-full relative h-5 bg-gray-900 border-b border-gray-800 shrink-0 cursor-crosshair group z-20"
+                                <div className="w-full relative h-5 bg-gray-900/50 border-b border-gray-800 shrink-0 cursor-crosshair group z-20"
                                      onDoubleClick={(e) => {
                                         if (duration <= 0) return;
                                         const rect = e.currentTarget.getBoundingClientRect();
@@ -702,26 +757,52 @@ const EditorContent: React.FC = () => {
                                 >
                                     {duration > 0 && sections.map(s => (
                                         <div key={s.id}
-                                             className="absolute top-0 bottom-0 border-r border-black/50 text-[10px] font-bold text-black flex items-center justify-center px-1 overflow-hidden whitespace-nowrap cursor-pointer hover:brightness-110 shadow-sm transition-all"
+                                             className="absolute top-0 bottom-0 border-r border-black/50 text-[10px] font-bold text-black flex items-center justify-center overflow-hidden whitespace-nowrap shadow-sm transition-all group/sec"
                                              style={{ left: `${(s.start / duration) * 100}%`, width: `${((s.end - s.start) / duration) * 100}%`, backgroundColor: s.color }}
-                                             onClick={(e) => { e.stopPropagation(); setEditingSection(s); }}
-                                             title={`${s.label} (${s.loopMode !== 'none' ? (s.loopMode === 'infinite' ? '∞' : `vueltas: ${s.loopCount}`) : 'Sin bucle'}) - Clic para editar`}
+                                             title={`${s.label} (${s.loopMode !== 'none' ? (s.loopMode === 'infinite' ? '∞' : `vueltas: ${s.loopCount}`) : 'Sin bucle'}) - Doble clic editar, arrastrar bordes/centro`}
+                                             onDoubleClick={(e) => { e.stopPropagation(); setEditingSection(s); }}
+                                             onMouseDown={(e) => {
+                                                 e.stopPropagation();
+                                                 setDraggingSection({ id: s.id, startX: e.clientX, initialStart: s.start, initialEnd: s.end, type: 'move' });
+                                             }}
                                         >
-                                            <span className="bg-black/20 px-1 rounded-sm backdrop-blur-sm text-white/90 drop-shadow-md">
-                                                {s.label} {s.loopMode !== 'none' && <span className="text-[8px] ml-0.5 opacity-80">🔄</span>}
-                                            </span>
+                                            {/* Left Resize Handle */}
+                                            <div 
+                                                className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 z-10"
+                                                onMouseDown={(e) => {
+                                                    e.stopPropagation();
+                                                    setDraggingSection({ id: s.id, startX: e.clientX, initialStart: s.start, initialEnd: s.end, type: 'resize-left' });
+                                                }}
+                                            />
+
+                                            <div className="flex-1 w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing">
+                                                <span className="bg-black/20 px-1 rounded-sm backdrop-blur-sm text-white/90 drop-shadow-md pointer-events-none">
+                                                    {s.label} {s.loopMode !== 'none' && <span className="text-[8px] ml-0.5 opacity-80">🔄</span>}
+                                                </span>
+                                            </div>
+
+                                            {/* Right Resize Handle */}
+                                            <div 
+                                                className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 z-10"
+                                                onMouseDown={(e) => {
+                                                    e.stopPropagation();
+                                                    setDraggingSection({ id: s.id, startX: e.clientX, initialStart: s.start, initialEnd: s.end, type: 'resize-right' });
+                                                }}
+                                            />
                                         </div>
                                     ))}
                                 </div>
-                                <div className="w-full relative h-full bg-gray-950 flex-1">
+                                <div className="w-full relative h-full flex-1 z-10 pointer-events-none">
                                     {masterBuffer ? (
-                                        <WaveformDisplay buffer={masterBuffer} color="#4ade80" />
+                                        <div className="absolute inset-0 z-10">
+                                            <WaveformDisplay buffer={masterBuffer} color="#00e5ff" />
+                                        </div>
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px] sm:text-xs">
                                             No audio loaded
                                         </div>
                                     )}
-                                    <div className="absolute top-1 left-1 z-10 bg-gray-800/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-green-400 font-bold pointer-events-none">
+                                    <div className="absolute top-1 left-1 z-20 bg-gray-800/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-white font-bold pointer-events-none">
                                         MASTER
                                     </div>
                                 </div>
