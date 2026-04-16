@@ -11,7 +11,7 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 import { LyricsEditor } from './LyricsEditor';
 import { LyricsTimelineTrack } from './LyricsTimelineTrack';
-import { Group, Panel, Separator, ImperativePanelHandle } from 'react-resizable-panels';
+import { Group, Panel, Separator, PanelImperativeHandle } from 'react-resizable-panels';
 import { LyricsRenderer } from './LyricsRenderer';
 
 const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDoubleClick?: () => void }> = ({ orientation, onDoubleClick }) => {
@@ -68,15 +68,15 @@ const EditorContent: React.FC = () => {
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
 
     // Panel Refs for toggling
-    const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
-    const mixerPanelRef = useRef<ImperativePanelHandle>(null);
+    const sidebarPanelRef = useRef<PanelImperativeHandle>(null);
+    const mixerPanelRef = useRef<PanelImperativeHandle>(null);
 
     const toggleSidebar = () => {
         const handle = sidebarPanelRef.current;
         console.log("toggleSidebar called, handle:", handle);
         if (handle) {
             console.log("isCollapsed?", handle.isCollapsed(), "size:", handle.getSize());
-            if (handle.isCollapsed() || handle.getSize() < 5) {
+            if (handle.isCollapsed() || handle.getSize().asPercentage < 5) {
                 handle.expand();
             } else {
                 handle.collapse();
@@ -89,7 +89,7 @@ const EditorContent: React.FC = () => {
         console.log("toggleMixer called, handle:", handle);
         if (handle) {
             console.log("isCollapsed?", handle.isCollapsed(), "size:", handle.getSize());
-            if (handle.isCollapsed() || handle.getSize() < 5) {
+            if (handle.isCollapsed() || handle.getSize().asPercentage < 5) {
                 handle.expand();
             } else {
                 handle.collapse();
