@@ -11,17 +11,25 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 import { LyricsEditor } from './LyricsEditor';
 import { LyricsTimelineTrack } from './LyricsTimelineTrack';
-import { Group, Panel, Separator } from 'react-resizable-panels';
+import { Group, Panel, Separator, ImperativePanelHandle } from 'react-resizable-panels';
 import { LyricsRenderer } from './LyricsRenderer';
 
-const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical' }> = ({ orientation }) => {
+const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDoubleClick?: () => void }> = ({ orientation, onDoubleClick }) => {
     return (
         <Separator
             className={`flex items-center justify-center transition-colors bg-gray-800 hover:bg-blue-600/50 group ${
                 orientation === 'horizontal' ? 'w-1.5 cursor-col-resize z-50' : 'h-1.5 cursor-row-resize z-50'
             }`}
+            onDoubleClickCapture={(e) => {
+                if (onDoubleClick) {
+                    e.stopPropagation();
+                    onDoubleClick();
+                }
+            }}
         >
-            <div className={orientation === 'horizontal' ? 'w-px h-8 bg-gray-600 group-hover:bg-blue-400' : 'h-px w-8 bg-gray-600 group-hover:bg-blue-400'} />
+            <div className={`flex items-center justify-center w-full h-full pointer-events-none`}>
+                <div className={orientation === 'horizontal' ? 'w-px h-8 bg-gray-600 group-hover:bg-blue-400' : 'h-px w-8 bg-gray-600 group-hover:bg-blue-400'} />
+            </div>
         </Separator>
     );
 };
@@ -58,6 +66,36 @@ const EditorContent: React.FC = () => {
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+
+    // Panel Refs for toggling
+    const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
+    const mixerPanelRef = useRef<ImperativePanelHandle>(null);
+
+    const toggleSidebar = () => {
+        const handle = sidebarPanelRef.current;
+        console.log("toggleSidebar called, handle:", handle);
+        if (handle) {
+            console.log("isCollapsed?", handle.isCollapsed(), "size:", handle.getSize());
+            if (handle.isCollapsed() || handle.getSize() < 5) {
+                handle.expand();
+            } else {
+                handle.collapse();
+            }
+        }
+    };
+
+    const toggleMixer = () => {
+        const handle = mixerPanelRef.current;
+        console.log("toggleMixer called, handle:", handle);
+        if (handle) {
+            console.log("isCollapsed?", handle.isCollapsed(), "size:", handle.getSize());
+            if (handle.isCollapsed() || handle.getSize() < 5) {
+                handle.expand();
+            } else {
+                handle.collapse();
+            }
+        }
+    };
 
     const activeLyricBlock = useMemo(() => {
         const mostRecentBlock = lyrics
@@ -951,19 +989,19 @@ const EditorContent: React.FC = () => {
                     </div>
                             </Panel>
                             
-                            <DividerHandle orientation="vertical" />
+                            <DividerHandle orientation="vertical" onDoubleClick={toggleMixer} />
 
                             {/* Mixer Channels */}
-                            <Panel id="left-mixer" minSize={10} className="flex flex-col text-white min-h-0 bg-gray-800/50 pt-1 sm:pt-2 relative z-10 overflow-hidden">
+                            <Panel id="left-mixer" minSize={10} collapsible panelRef={mixerPanelRef} className="flex flex-col text-white min-h-0 bg-gray-800/50 pt-1 sm:pt-2 relative z-10 overflow-hidden">
                                 <MixerBoard />
                             </Panel>
                         </Group>
                     </Panel>
 
-                    <DividerHandle orientation="horizontal" />
+                    <DividerHandle orientation="horizontal" onDoubleClick={toggleSidebar} />
 
                     {/* Right: Sidebar */}
-                    <Panel id="main-right" minSize={15} className="w-full bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
+                    <Panel id="main-right" minSize={15} collapsible panelRef={sidebarPanelRef} className="w-full bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
                         <Group 
                             key={`sidebar-${layoutVersion}`} 
                             orientation="vertical" 
