@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
         // Inicializar con la versión estable
         const genAI = new GoogleGenerativeAI(apiKey);
         
-        // Usamos Gemini 2.0 Flash que es el que tienes disponible y es excelente
+        // Usamos la versión LITE que suele tener mayor cuota gratuita
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.0-flash",
+            model: "gemini-2.0-flash-lite",
         });
 
         // Convert file to base64 for inline submission to Gemini (Supports up to 20MB)
@@ -82,7 +82,7 @@ No agregues texto extra antes o después del JSON.
         console.log("Llamando a Gemini API para procesar audio...", mode);
         const result = await model.generateContent([promptText, generativePart]);
         const textResponse = result.response.text();
-        console.log("Respuesta de Gemini recibida:", textResponse);
+        console.log("Respuesta de Gemini recibida!");
 
         // Intentar extraer el JSON buscando el primer '[' y el último ']'
         const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
@@ -98,21 +98,6 @@ No agregues texto extra antes o después del JSON.
 
     } catch (error: any) {
         console.error("DEBUG - API Route Error:", error);
-        
-        // Diagnóstico: Intentar ver qué modelos SÍ puede ver esta llave
-        try {
-            const apiKey = process.env.GEMINI_API_KEY || "";
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
-            const data = await response.json();
-            if (data.models) {
-                console.log("Modelos disponibles para esta API Key:", data.models.map((m: any) => m.name).join(", "));
-            } else {
-                console.log("La API Key no devolvió ningún modelo disponible. Verifica que la 'Generative Language API' esté activa en Google AI Studio.");
-            }
-        } catch (diagError) {
-            console.error("No se pudo realizar el diagnóstico de modelos:", diagError);
-        }
-
         return NextResponse.json({ success: false, error: error.message, raw: error }, { status: 500 });
     }
 }
