@@ -22,13 +22,13 @@ export async function POST(req: NextRequest) {
         // Log de depuración para ver si la llave es la correcta (solo los primeros 7 caracteres)
         console.log(`Usando API Key que empieza por: ${apiKey.substring(0, 7)}...`);
 
-        // Inicializar con la versión estable v1
+        // Inicializar con la versión estable
         const genAI = new GoogleGenerativeAI(apiKey);
         
-        // Usamos el alias estable 'gemini-1.5-flash' y forzamos API v1
+        // Usamos Gemini 2.0 Flash que es el que tienes disponible y es excelente
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
-        }, { apiVersion: 'v1' });
+            model: "gemini-2.0-flash",
+        });
 
         // Convert file to base64 for inline submission to Gemini (Supports up to 20MB)
         const arrayBuffer = await audioFile.arrayBuffer();
@@ -98,6 +98,21 @@ No agregues texto extra antes o después del JSON.
 
     } catch (error: any) {
         console.error("DEBUG - API Route Error:", error);
+        
+        // Diagnóstico: Intentar ver qué modelos SÍ puede ver esta llave
+        try {
+            const apiKey = process.env.GEMINI_API_KEY || "";
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
+            const data = await response.json();
+            if (data.models) {
+                console.log("Modelos disponibles para esta API Key:", data.models.map((m: any) => m.name).join(", "));
+            } else {
+                console.log("La API Key no devolvió ningún modelo disponible. Verifica que la 'Generative Language API' esté activa en Google AI Studio.");
+            }
+        } catch (diagError) {
+            console.error("No se pudo realizar el diagnóstico de modelos:", diagError);
+        }
+
         return NextResponse.json({ success: false, error: error.message, raw: error }, { status: 500 });
     }
 }
