@@ -22,8 +22,13 @@ export async function POST(req: NextRequest) {
         // Log de depuración para ver si la llave es la correcta (solo los primeros 7 caracteres)
         console.log(`Usando API Key que empieza por: ${apiKey.substring(0, 7)}...`);
 
+        // Inicializar con la versión estable v1
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        
+        // Usamos el alias estable 'gemini-1.5-flash'
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+        });
 
         // Convert file to base64 for inline submission to Gemini (Supports up to 20MB)
         const arrayBuffer = await audioFile.arrayBuffer();
