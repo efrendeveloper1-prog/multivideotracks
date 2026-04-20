@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAudioEngine, LyricBlock } from '@/hooks/useAudioEngine';
 import { FontPicker } from './FontPicker';
+import { processVocalTrackForAI } from '@/utils/audioApiSync';
 
 interface LyricsEditorProps {
     onClose: () => void;
@@ -8,13 +9,63 @@ interface LyricsEditorProps {
 
 export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     const { 
-        lyrics, setLyrics, currentTime, updateLyricBlock, removeLyricBlock, 
+        tracks, lyrics, setLyrics, currentTime, updateLyricBlock, removeLyricBlock, 
         addLyricBlock, clearLyrics, lyricsSettings, setLyricsSettings 
     } = useAudioEngine();
     const [rawText, setRawText] = useState('');
     const [isPasting, setIsPasting] = useState(lyrics.length === 0);
     const [linesPerBlock, setLinesPerBlock] = useState<1 | 2>(2);
     const [showFontPicker, setShowFontPicker] = useState(false);
+    const [isSyncingAI, setIsSyncingAI] = useState(false);
+    const [syncProgress, setSyncProgress] = useState(0);
+
+    const vocalTrack = useMemo(() => {
+        return tracks.find(t => t.buffer && !!t.name.toLowerCase().match(/vox|voz|vocal|vocals|choir|bgvs/i));
+    }, [tracks]);
+
+    const handleAISync = async () => {
+        if (!vocalTrack || !vocalTrack.buffer) return;
+        
+        let mode: 'transcribe' | 'align' = 'transcribe';
+        let lyricsText = '';
+        
+        if (lyrics.length > 0) {
+            const wantToAlign = confirm(
+                'Tienes letras en el editor. ¿Deseas que la IA alinee e intente sincronizar estas letras (Aceptar) o prefieres que la IA transcriba la canción desde cero (Cancelar)?'
+            );
+            if (wantToAlign) {
+                mode = 'align';
+                lyricsText = lyrics.map(l => l.text).join('\n');
+            }
+        }
+        
+        setIsSyncingAI(true);
+        setSyncProgress(0);
+        try {
+            const result = await processVocalTrackForAI(vocalTrack.buffer, lyricsText, mode, setSyncProgress);
+            setIsSyncingAI(false);
+            if (result.length > 0) {
+                const shouldReplace = confirm(`¡Éxito! Se detectaron ${result.length} bloques. ¿Deseas reemplazar las letras actuales en el editor? (Clic "Aceptar" para reemplazar, "Cancelar" para agregar al final)`);
+                const newBlocks: LyricBlock[] = result.map((b) => ({
+                    id: crypto.randomUUID(),
+                    text: b.text,
+                    startTime: b.startTime,
+                }));
+                
+                if (shouldReplace) {
+                    setLyrics(newBlocks);
+                } else {
+                    setLyrics(prev => [...prev, ...newBlocks]);
+                }
+            } else {
+                alert("No se detectó texto en el track vocal, o hubo un problema con el reconocimiento de voz.");
+            }
+        } catch (error) {
+            console.error("AI Sync Error:", error);
+            alert("Upps, hubo un error comunicándose con la IA. Consulta la consola.");
+            setIsSyncingAI(false);
+        }
+    };
 
     const handlePasteSubmit = () => {
         if (!rawText.trim()) return;
@@ -243,7 +294,21 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                     </div>
 
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 items-center">
+                                    {vocalTrack && (
+                                        <button 
+                                            onClick={handleAISync}
+                                            disabled={isSyncingAI}
+                                            className={`px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                                isSyncingAI 
+                                                    ? 'bg-purple-900/40 text-purple-400 border border-purple-800 cursor-not-allowed'
+                                                    : 'bg-purple-600 hover:bg-purple-500 text-white'
+                                            }`}
+                                            title="Extrae letras usando Inteligencia Artificial"
+                                        >
+                                            {isSyncingAI ? `⏳ Sincronizando... ${syncProgress}%` : '✨ Sincronizar por AI'}
+                                        </button>
+                                    )}
                                     <button 
                                         onClick={() => setIsPasting(true)}
                                         className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-blue-400 rounded text-[10px] sm:text-xs font-bold transition-colors"

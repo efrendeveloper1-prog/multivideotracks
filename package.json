@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@twick/live-player": "latest",
     "@twick/studio": "latest",
     "@twick/timeline": "latest",
