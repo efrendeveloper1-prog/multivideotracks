@@ -74,15 +74,22 @@ No agregues texto extra antes o después del JSON.
         console.log("Llamando a Gemini API para procesar audio...", mode);
         const result = await model.generateContent([promptText, generativePart]);
         const textResponse = result.response.text();
+        console.log("Respuesta de Gemini recibida:", textResponse);
 
-        // Limpiar posible formato markdown que envían los modelos (```json ... ```)
-        const cleanJson = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-        const blocks = JSON.parse(cleanJson);
+        // Intentar extraer el JSON buscando el primer '[' y el último ']'
+        const jsonMatch = textResponse.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) {
+            console.error("No se encontró un array JSON en la respuesta de Gemini");
+            return NextResponse.json({ success: false, error: "La IA no devolvió un formato válido.", raw: textResponse });
+        }
+
+        const blocks = JSON.parse(jsonMatch[0]);
+        console.log("Sincronización procesada con éxito:", blocks.length, "bloques");
 
         return NextResponse.json({ success: true, blocks });
 
     } catch (error: any) {
-        console.error("API Route Error:", error);
+        console.error("DEBUG - API Route Error:", error);
         return NextResponse.json({ success: false, error: error.message, raw: error }, { status: 500 });
     }
 }
