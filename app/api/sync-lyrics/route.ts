@@ -25,10 +25,10 @@ export async function POST(req: NextRequest) {
         // Inicializar con la versión estable v1
         const genAI = new GoogleGenerativeAI(apiKey);
         
-        // Usamos el alias estable 'gemini-1.5-flash'
+        // Usamos el alias estable 'gemini-1.5-flash' y forzamos API v1
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-        });
+        }, { apiVersion: 'v1' });
 
         // Convert file to base64 for inline submission to Gemini (Supports up to 20MB)
         const arrayBuffer = await audioFile.arrayBuffer();
