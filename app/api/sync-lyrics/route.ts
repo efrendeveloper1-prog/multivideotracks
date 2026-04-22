@@ -4,12 +4,13 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const maxDuration = 60;
 
 // Lista de modelos a intentar en orden de preferencia (cascada de fallback)
+// Priorizamos modelos más capaces (mejor reconocimiento de voz) antes que los lite
 const MODEL_FALLBACK_LIST = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-pro",
     "gemini-2.5-flash-lite",
     "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
 ];
 
 async function tryGenerateWithFallback(
@@ -82,38 +83,36 @@ export async function POST(req: NextRequest) {
 
         let promptText = "";
         if (mode === "align" && lyrics && lyrics.trim()) {
-            promptText = `
-Aquí tienes una pista de audio de una canción y sus letras oficiales:
+            promptText = `You are a professional audio-to-text synchronization specialist. Your goal is EXTREME temporal precision and word-for-word alignment.
 
-LETRAS:
+TASK: Synchronize the provided OFFICIAL LYRICS with the attached vocal audio track.
+
+OFFICIAL LYRICS:
 ${lyrics}
 
-Tu tarea es escuchar el audio y sincronizar las letras proporcionadas.
-Devuélveme ÚNICAMENTE un array en formato puro JSON (sin etiquetas markdown como \`\`\`json). 
-Cada objeto del array debe tener:
-{
-    "text": "línea o frase cantada",
-    "startTime": 1.5, 
-    "endTime": 3.0
-}
-Asegúrate de que los tiempos de inicio (startTime) y fin (endTime) estén en SEGUNDOS.
-Alinea los tiempos basándote estrictamente en el audio de la voz.
-No agregues texto extra antes o después del JSON.
+STRICT ARCHITECTURAL RULES:
+1. Listen critically to the vocal transients. The "startTime" must be the millisecond the singer starts the first phoneme of the phrase.
+2. The "endTime" must be the EXACT moment the vocal resonance of the last word fades out.
+3. GAP DETECTION: If there is more than 0.5 seconds of silence or instrumental-only audio between phrases, the previous "endTime" MUST NOT touch the next "startTime". There should be a visible gap in the timestamps.
+4. VERBATIM: If the singer deviates slightly from the official lyrics, prioritize what is actually SUNG in the "text" field, or at least align the timestamps to the singing.
+5. NO LAZINESS: Do not round to the nearest second. Use 0.1s precision (e.g. 14.7).
+6. FORMAT: Return ONLY a raw JSON array. Example: [{"text": "Hello world", "startTime": 1.2, "endTime": 3.4}]. No markdown.
 `;
         } else {
-            promptText = `
-Aquí tienes una pista de audio (una pista de voz de una canción).
-Tu tarea es escuchar el audio, transcribir la letra cantada y sincronizarla en el tiempo.
-Devuélveme ÚNICAMENTE un array en formato puro JSON (sin etiquetas markdown como \`\`\`json). 
-Cada objeto del array debe tener:
-{
-    "text": "línea o frase transcrita",
-    "startTime": 1.5, 
-    "endTime": 3.0
-}
-Asegúrate de que los tiempos de inicio (startTime) y fin (endTime) estén en SEGUNDOS.
-Intenta agrupar el texto en frases lógicas (1 o 2 renglones).
-No agregues texto extra antes o después del JSON.
+            promptText = `You are a world-class music transcription engine. Your goal is a 100% accurate verbatim transcript with precise timing.
+
+TASK: Transcribe the attached vocal audio track and determine the exact start and end times for each phrase.
+
+STRICT TRANSCRIBER RULES:
+1. WORD ACCURACY: Transcribe exactly what is sung. Do not guess or autocorrect if the singer uses slang or specific উচ্চারন (pronunciation).
+2. LANGUAGE: Detect the language automatically and transcribe in its native script.
+3. PHRASING: Group into 1-2 line logical song phrases.
+4. TIMING PRECISION: 
+   - "startTime": EXACT start of vocalization.
+   - "endTime": EXACT moment the voice stops/fades.
+5. GAP HANDLING: If there is a break in singing (instrumental, breath, pause > 0.4s), the "endTime" of the previous phrase MUST reflect the actual stop. DO NOT carry the text over musical gaps.
+6. BACKGROUND NOISE: Ignore any residual background music or noise. Focus only on the leading vocal.
+7. FORMAT: Return ONLY a raw JSON array. Example: [{"text": "Phrase text", "startTime": 10.5, "endTime": 13.2}]. No markdown.
 `;
         }
 

@@ -38,9 +38,10 @@ export async function processVocalTrackForAI(
 
     onProgress(10);
 
-    // Usamos 8kHz mono para que un audio de varios minutos pese ~3.5MB.
-    // Esto evita el límite de 6MB de Netlify Serverless Functions.
-    const TARGET_SAMPLE_RATE = 8000;
+    // 16kHz mono ofrece mejor calidad para que la IA detecte los tiempos con mayor precisión.
+    // Un audio de 4 minutos a 16kHz mono pesa ~7.5MB en WAV, pero al ser base64 en JSON
+    // sigue dentro de los límites aceptables para la mayoría de las funciones serverless.
+    const TARGET_SAMPLE_RATE = 16000;
     const OfflineCtx = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
     const offlineCtx = new OfflineCtx(1, inputBuffer.duration * TARGET_SAMPLE_RATE, TARGET_SAMPLE_RATE);
 
@@ -52,14 +53,28 @@ export async function processVocalTrackForAI(
     const renderedBuffer = await offlineCtx.startRendering();
     onProgress(40);
 
-    // Extraer samples y codificar en WAV
+    // Extraer samples
     const samples = new Float32Array(renderedBuffer.length);
     renderedBuffer.copyFromChannel(samples, 0, 0);
+
+    // 1. Normalizar volumen para mejorar el reconocimiento (Peak Normalization a 0.95)
+    let maxAmp = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const abs = Math.abs(samples[i]);
+        if (abs > maxAmp) maxAmp = abs;
+    }
+    if (maxAmp > 0) {
+        const ratio = 0.95 / maxAmp;
+        for (let i = 0; i < samples.length; i++) {
+            samples[i] *= ratio;
+        }
+    }
+
     const wavBlob = encodeWAV(samples, TARGET_SAMPLE_RATE);
     onProgress(60);
 
     const formData = new FormData();
-    formData.append('audio', wavBlob, 'vocal_track_8khz.wav');
+    formData.append('audio', wavBlob, 'vocal_track_16khz.wav');
     formData.append('mode', mode);
     if (mode === 'align' && lyricsText) {
         formData.append('lyrics', lyricsText);

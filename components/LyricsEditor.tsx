@@ -68,6 +68,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                     id: crypto.randomUUID(),
                     text: b.text,
                     startTime: b.startTime,
+                    endTime: b.endTime,
                 }));
                 setLyrics(newBlocks);
                 setView('editor');
@@ -137,6 +138,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                     id: crypto.randomUUID(),
                     text: b.text,
                     startTime: b.startTime,
+                    endTime: b.endTime,
                 }));
                 setLyrics(prev => [...prev, ...newBlocks]);
                 setRawText('');
@@ -629,10 +631,13 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                         {/* Lista de bloques */}
                         {lyrics.map((block, idx) => (
                             <div key={block.id} className="flex gap-2 items-start bg-gray-800/50 p-2 sm:p-3 rounded border border-gray-700/50 group">
-                                <div className="flex flex-col items-center justify-center gap-1 shrink-0 w-12 sm:w-16">
+                                <div className="flex flex-col items-center justify-center gap-0.5 shrink-0 w-14 sm:w-20">
                                     <span className="text-[10px] text-gray-500 font-mono hidden sm:inline">#{idx+1}</span>
                                     <div className={`text-[10px] sm:text-xs font-mono font-bold px-1 py-0.5 rounded w-full text-center ${block.startTime !== null ? 'text-green-400 bg-gray-950' : 'text-yellow-600 bg-gray-950'}`}>
-                                        {formatTime(block.startTime)}
+                                        ▶ {formatTime(block.startTime)}
+                                    </div>
+                                    <div className={`text-[10px] sm:text-xs font-mono px-1 py-0.5 rounded w-full text-center ${block.endTime ? 'text-orange-400 bg-gray-950' : 'text-gray-600 bg-gray-950'}`}>
+                                        ■ {formatTime(block.endTime ?? null)}
                                     </div>
                                 </div>
                                 <textarea
@@ -643,11 +648,19 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                 <div className="flex flex-col gap-1 shrink-0 justify-start">
                                     <button
                                         onClick={() => updateLyricBlock(block.id, { startTime: currentTime })}
-                                        title="Mapear al Playhead actual"
-                                        className="p-1 sm:px-2 sm:py-1 bg-blue-900/40 hover:bg-blue-800 text-blue-400 hover:text-white border border-blue-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
+                                        title="Mapear Inicio al Playhead actual"
+                                        className="p-1 sm:px-2 sm:py-1 bg-green-900/40 hover:bg-green-800 text-green-400 hover:text-white border border-green-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
                                     >
-                                        <span className="hidden sm:inline">↓ Mapear</span>
-                                        <span className="sm:hidden">↓</span>
+                                        <span className="hidden sm:inline">▶ Inicio</span>
+                                        <span className="sm:hidden">▶</span>
+                                    </button>
+                                    <button
+                                        onClick={() => updateLyricBlock(block.id, { endTime: currentTime })}
+                                        title="Mapear Fin al Playhead actual"
+                                        className="p-1 sm:px-2 sm:py-1 bg-orange-900/40 hover:bg-orange-800 text-orange-400 hover:text-white border border-orange-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
+                                    >
+                                        <span className="hidden sm:inline">■ Fin</span>
+                                        <span className="sm:hidden">■</span>
                                     </button>
                                     <button
                                         onClick={() => removeLyricBlock(block.id)}
