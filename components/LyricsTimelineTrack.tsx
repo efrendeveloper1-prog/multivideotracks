@@ -8,10 +8,12 @@ export const LyricsTimelineTrack: React.FC = () => {
     const safeLyrics = engine.lyrics || [];
     const safeDuration = engine.duration || 0;
 
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [draggingId, setDraggingId] = useState<string | null>(null);
     const [resizingId, setResizingId] = useState<string | null>(null);
     const dragStartX = useRef<number>(0);
     const initialTime = useRef<number>(0);
+    const initialTimes = useRef<Map<string, { start: number | null, end: number | null }>>(new Map());
     const containerRef = useRef<HTMLDivElement>(null);
 
     const mappedLyrics = safeLyrics.filter(l => l.startTime !== null);
@@ -26,9 +28,24 @@ export const LyricsTimelineTrack: React.FC = () => {
             const deltaTime = (deltaX / rect.width) * safeDuration;
             
             if (draggingId) {
-                let newTime = initialTime.current + deltaTime;
-                newTime = Math.max(0, Math.min(newTime, safeDuration));
-                engine.updateLyricBlock(draggingId, { startTime: newTime });
+                engine.setLyrics((prev: any) => prev.map((l: any) => {
+                    if (selectedIds.has(l.id)) {
+                        const initial = initialTimes.current.get(l.id);
+                        if (initial && initial.start !== null) {
+                            let newStart = initial.start + deltaTime;
+                            newStart = Math.max(0, Math.min(newStart, safeDuration));
+                            
+                            let newEnd = l.endTime;
+                            if (initial.end !== null) {
+                                const duration = initial.end - initial.start;
+                                newEnd = newStart + duration;
+                            }
+                            
+                            return { ...l, startTime: newStart, endTime: newEnd };
+                        }
+                    }
+                    return l;
+                }));
             } else if (resizingId) {
                 let newTime = initialTime.current + deltaTime;
                 const block = safeLyrics.find((l: any) => l.id === resizingId);
@@ -50,7 +67,7 @@ export const LyricsTimelineTrack: React.FC = () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [draggingId, resizingId, safeDuration, engine, safeLyrics]);
+    }, [draggingId, resizingId, safeDuration, engine, safeLyrics, selectedIds]);
 
     if (mappedLyrics.length === 0 && safeLyrics.length === 0) return null;
 
@@ -59,7 +76,10 @@ export const LyricsTimelineTrack: React.FC = () => {
             ref={containerRef}
             className="border-b border-gray-700 relative flex flex-col shrink-0 overflow-hidden h-full bg-gray-900 overflow-visible"
             onClick={(e) => e.stopPropagation()} // Prevent triggering timeline seeks
-            onMouseDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => {
+                e.stopPropagation();
+                setSelectedIds(new Set());
+            }}
         >
             <div className="absolute top-1 left-1 z-10 bg-blue-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-blue-300 font-bold pointer-events-none">
                 LYRICS
@@ -77,14 +97,15 @@ export const LyricsTimelineTrack: React.FC = () => {
                     }
                     const widthPct = ((blockEndTime - lyric.startTime!) / safeDuration) * 100;
                     
-                    const isDragging = draggingId === lyric.id;
+                    const isSelected = selectedIds.has(lyric.id);
+                    const isDragging = draggingId === lyric.id || (draggingId && isSelected);
                     const isResizing = resizingId === lyric.id;
                     
                     return (
                         <div 
                             key={lyric.id}
                             className={`absolute top-1 bottom-1 flex items-center px-1 sm:px-2 py-0.5 rounded border text-[9px] sm:text-[10px] whitespace-nowrap overflow-hidden z-20 transition-colors
-                                ${isDragging || isResizing
+                                ${isDragging || isResizing || isSelected
                                     ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-900/50 z-30' 
                                     : 'bg-blue-900/50 border-blue-700/50 hover:bg-blue-800/80 hover:border-blue-500 text-blue-200 hover:z-30'
                                 }`}
@@ -100,9 +121,34 @@ export const LyricsTimelineTrack: React.FC = () => {
                                 className="absolute inset-y-0 left-0 right-2 cursor-grab active:cursor-grabbing"
                                 onMouseDown={(e) => {
                                     e.stopPropagation();
-                                    setDraggingId(lyric.id);
-                                    dragStartX.current = e.clientX;
-                                    initialTime.current = lyric.startTime!;
+                                    let newSelected = new Set(selectedIds);
+                                    if (e.ctrlKey || e.metaKey) {
+                                        if (newSelected.has(lyric.id)) {
+                                            newSelected.delete(lyric.id);
+                                        } else {
+                                            newSelected.add(lyric.id);
+                                        }
+                                    } else {
+                                        if (!newSelected.has(lyric.id)) {
+                                            newSelected = new Set([lyric.id]);
+                                        }
+                                    }
+                                    setSelectedIds(newSelected);
+                                    
+                                    if (newSelected.has(lyric.id)) {
+                                        setDraggingId(lyric.id);
+                                        dragStartX.current = e.clientX;
+                                        
+                                        const newInitialTimes = new Map();
+                                        safeLyrics.forEach((l: any) => {
+                                            if (newSelected.has(l.id)) {
+                                                newInitialTimes.set(l.id, { start: l.startTime, end: l.endTime });
+                                            }
+                                        });
+                                        initialTimes.current = newInitialTimes;
+                                    } else {
+                                        setDraggingId(null);
+                                    }
                                 }}
                             />
                             
