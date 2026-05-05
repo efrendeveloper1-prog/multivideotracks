@@ -13,7 +13,11 @@ export const TransportControls: React.FC = () => {
         songAnalysis,
         playlist,
         activeSongId,
-        loadSong
+        loadSong,
+        pitchShift,
+        setPitchShift,
+        playbackRate,
+        setPlaybackRate
     } = useAudioEngine();
 
     // Setup Spacebar keyboard shortcut for Play/Pause
@@ -57,6 +61,38 @@ export const TransportControls: React.FC = () => {
     const bpmDisplay = songAnalysis?.bpm || '--';
     const keyDisplay = songAnalysis?.keyDisplay || '--';
     const timeSigDisplay = songAnalysis?.timeSignature || '4/4';
+
+    // Pitch Options Logic
+    const SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const FLATS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+    
+    const getPitchOptions = () => {
+        if (!songAnalysis?.keyDisplay) return [{ label: 'Normal (0)', value: 0 }];
+        let root = songAnalysis.keyDisplay.split(' ')[0];
+        if (root.length > 1 && root[1].toLowerCase() === 'm') root = root[0]; 
+        
+        let idx = SHARPS.indexOf(root);
+        if (idx === -1) idx = FLATS.indexOf(root);
+        if (idx === -1) return [{ label: `${root} (0)`, value: 0 }];
+        
+        const options = [];
+        // Down 8
+        for (let i = -8; i < 0; i++) {
+            let noteIdx = (idx + i) % 12;
+            if (noteIdx < 0) noteIdx += 12;
+            options.push({ label: `${FLATS[noteIdx]} (${i})`, value: i });
+        }
+        // Original
+        options.push({ label: `${root} (0)`, value: 0 });
+        // Up 8
+        for (let i = 1; i <= 8; i++) {
+            let noteIdx = (idx + i) % 12;
+            options.push({ label: `${SHARPS[noteIdx]} (+${i})`, value: i });
+        }
+        return options;
+    };
+
+    const pitchOptions = getPitchOptions();
 
     return (
         <div className="flex items-center justify-between bg-gray-800 p-2 sm:p-4 rounded-lg border border-gray-700 h-full">
@@ -136,15 +172,37 @@ export const TransportControls: React.FC = () => {
                 </div>
             </div>
 
-            {/* Key & Tempo Info */}
+            {/* Key & Tempo Controls */}
             <div className="flex flex-col gap-1 sm:gap-2 shrink-0">
-                <div className={`px-2 sm:px-3 py-1 rounded text-[10px] sm:text-xs font-bold ${songAnalysis ? 'bg-green-900/40 text-green-400 border border-green-800/50' : 'bg-gray-700 text-gray-400'
-                    }`}>
-                    KEY: {keyDisplay}
+                <div className={`flex items-center px-2 py-1 rounded text-[10px] sm:text-xs font-bold ${songAnalysis ? 'bg-green-900/40 text-green-400 border border-green-800/50' : 'bg-gray-700 text-gray-400'}`}>
+                    <span className="mr-2">KEY:</span>
+                    <select 
+                        value={pitchShift} 
+                        onChange={(e) => setPitchShift(Number(e.target.value))}
+                        disabled={!songAnalysis}
+                        className="bg-transparent outline-none cursor-pointer text-white"
+                    >
+                        {!songAnalysis && <option value={0}>--</option>}
+                        {songAnalysis && pitchOptions.map(opt => (
+                            <option key={opt.value} value={opt.value} className="bg-gray-800 text-white">
+                                {opt.label}
+                            </option>
+                        ))}
+                    </select>
                 </div>
-                <div className={`px-2 sm:px-3 py-1 rounded text-[10px] sm:text-xs font-bold ${songAnalysis ? 'bg-blue-900/40 text-blue-400 border border-blue-800/50' : 'bg-gray-700 text-gray-400'
-                    }`}>
-                    BPM: {bpmDisplay}
+                <div className={`flex items-center px-2 py-1 rounded text-[10px] sm:text-xs font-bold ${songAnalysis ? 'bg-blue-900/40 text-blue-400 border border-blue-800/50' : 'bg-gray-700 text-gray-400'}`}>
+                    <span className="mr-2">TEMPO:</span>
+                    <input 
+                        type="range" 
+                        min={Math.round((songAnalysis?.bpm || 120) * 0.5)} 
+                        max={Math.round((songAnalysis?.bpm || 120) * 1.5)} 
+                        step="1" 
+                        value={Math.round((songAnalysis?.bpm || 120) * playbackRate)} 
+                        onChange={(e) => setPlaybackRate(Number(e.target.value) / (songAnalysis?.bpm || 120))}
+                        className="w-16 sm:w-20 cursor-pointer"
+                        disabled={!songAnalysis}
+                    />
+                    <span className="ml-2 w-12 text-right">{Math.round((songAnalysis?.bpm || 120) * playbackRate)} BPM</span>
                 </div>
             </div>
         </div>

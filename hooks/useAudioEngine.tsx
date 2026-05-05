@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
+import { SoundTouchNode } from '@soundtouchjs/audio-worklet';
 
 // Types
 export interface CutRegion { start: number; end: number; }
@@ -27,7 +28,7 @@ export interface Track { id: string; name: string; file: File | null; buffer?: A
 export interface Song { id: string; title: string; artist: string; key: string; bpm: number; stemFiles: File[]; videoFile?: File | null; cachedTracks?: Track[]; cachedDuration?: number; cachedSections?: TimelineSection[]; cachedVideoDuration?: number; cachedVideoOffset?: number; cachedVideoEndTime?: number; cachedCutRegions?: CutRegion[]; cachedSplitPoints?: number[]; cachedLyrics?: LyricBlock[]; cachedLyricsSettings?: LyricsSettings; cachedVideoFadeIn?: number; cachedVideoFadeOut?: number; isPlaceholder?: boolean; analysis?: AudioAnalysis | null; }
 
 interface AudioEngineContextType {
-    tracks: Track[]; isPlaying: boolean; currentTime: number; duration: number; addTrack: (file: File, name: string) => Promise<void>; addVideoTrack: (file: File) => Promise<void>; removeTrack: (id: string) => void; clearTracks: () => void; togglePlay: () => void; stop: () => void; seek: (time: number) => void; setTrackVolume: (id: string, volume: number) => void; setTrackPan: (id: string, pan: number) => void; toggleTrackMute: (id: string) => void; toggleTrackSolo: (id: string) => void; setVideoElement: (element: HTMLVideoElement | null) => void; masterVolume: number; setMasterVolume: (val: number) => void; videoDuration: number; trimVideoToAudio: () => void; videoOffset: number; setVideoOffset: (offset: number) => void; videoEndTime: number; setVideoEndTime: (time: number) => void; videoFadeIn: number; setVideoFadeIn: (val: number) => void; videoFadeOut: number; setVideoFadeOut: (val: number) => void; videoOpacity: number; cutRegions: CutRegion[]; setCutRegions: (regions: CutRegion[]) => void; splitPoints: number[]; setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>; addCutRegion: (region: CutRegion) => void; removeCutRegion: (index: number) => void; revertVideo: () => void; isInCutRegion: boolean; lyrics: LyricBlock[]; setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>; addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void; updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void; removeLyricBlock: (id: string) => void; clearLyrics: () => void; lyricsSettings: LyricsSettings; setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>; invertBackground: boolean; setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>; showLyrics: boolean; setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>; panelSizes: PanelSizes; setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>; layoutVersion: number; playlist: Song[]; activeSongId: string | null; addSongToPlaylist: (song: Song) => void; removeSongFromPlaylist: (id: string) => void; updateSongInPlaylist: (id: string, song: Song) => void; loadSong: (id: string) => Promise<void>; loadPreparedSong: (song: Song) => void; updateActiveSongCache: () => void; prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>; exportPreset: () => void; importPreset: (file: File) => Promise<void>; songAnalysis: AudioAnalysis | null; loadingProgress: number | null; getMasterLevels: () => [number, number]; getTrackLevel: (id: string) => number; isUploading: boolean; setIsUploading: (val: boolean) => void; uploadMessage: string; setUploadMessage: (msg: string) => void; processZipFile: (file: File) => Promise<void>; processVideoFile: (file: File) => Promise<void>; sections: TimelineSection[]; setSections: React.Dispatch<React.SetStateAction<TimelineSection[]>>;
+    tracks: Track[]; isPlaying: boolean; currentTime: number; duration: number; addTrack: (file: File, name: string) => Promise<void>; addVideoTrack: (file: File) => Promise<void>; removeTrack: (id: string) => void; clearTracks: () => void; togglePlay: () => void; stop: () => void; seek: (time: number) => void; setTrackVolume: (id: string, volume: number) => void; setTrackPan: (id: string, pan: number) => void; toggleTrackMute: (id: string) => void; toggleTrackSolo: (id: string) => void; setVideoElement: (element: HTMLVideoElement | null) => void; masterVolume: number; setMasterVolume: (val: number) => void; videoDuration: number; trimVideoToAudio: () => void; videoOffset: number; setVideoOffset: (offset: number) => void; videoEndTime: number; setVideoEndTime: (time: number) => void; videoFadeIn: number; setVideoFadeIn: (val: number) => void; videoFadeOut: number; setVideoFadeOut: (val: number) => void; videoOpacity: number; cutRegions: CutRegion[]; setCutRegions: (regions: CutRegion[]) => void; splitPoints: number[]; setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>; addCutRegion: (region: CutRegion) => void; removeCutRegion: (index: number) => void; revertVideo: () => void; isInCutRegion: boolean; lyrics: LyricBlock[]; setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>; addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void; updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void; removeLyricBlock: (id: string) => void; clearLyrics: () => void; lyricsSettings: LyricsSettings; setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>; invertBackground: boolean; setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>; showLyrics: boolean; setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>; panelSizes: PanelSizes; setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>; layoutVersion: number; playlist: Song[]; activeSongId: string | null; addSongToPlaylist: (song: Song) => void; removeSongFromPlaylist: (id: string) => void; updateSongInPlaylist: (id: string, song: Song) => void; loadSong: (id: string) => Promise<void>; loadPreparedSong: (song: Song) => void; updateActiveSongCache: () => void; prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>; exportPreset: () => void; importPreset: (file: File) => Promise<void>; songAnalysis: AudioAnalysis | null; loadingProgress: number | null; getMasterLevels: () => [number, number]; getTrackLevel: (id: string) => number; isUploading: boolean; setIsUploading: (val: boolean) => void; uploadMessage: string; setUploadMessage: (msg: string) => void; processZipFile: (file: File) => Promise<void>; processVideoFile: (file: File) => Promise<void>; sections: TimelineSection[]; setSections: React.Dispatch<React.SetStateAction<TimelineSection[]>>; pitchShift: number; setPitchShift: (val: number) => void; playbackRate: number; setPlaybackRate: (val: number) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -60,6 +61,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isUploading, setIsUploading] = useState(false);
     const [uploadMessage, setUploadMessage] = useState('');
     const [layoutVersion, setLayoutVersion] = useState<number>(0);
+    const [pitchShift, setPitchShift] = useState<number>(0);
+    const [playbackRate, setPlaybackRate] = useState<number>(1);
     const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('studioPanelSizes');
@@ -75,6 +78,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const gainNodesRef = useRef<Map<string, GainNode>>(new Map());
     const pannerNodesRef = useRef<Map<string, StereoPannerNode>>(new Map());
     const masterGainRef = useRef<GainNode | null>(null);
+    
+    // Buses and ST nodes
+    const melodyStNodeRef = useRef<any>(null);
+    const drumStNodeRef = useRef<any>(null);
+    const melodyBusRef = useRef<GainNode | null>(null);
+    const drumBusRef = useRef<GainNode | null>(null);
+
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const startTimeRef = useRef<number>(0);
     const pauseTimeRef = useRef<number>(0);
@@ -103,19 +113,40 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const trackAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
 
     useEffect(() => {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        audioContextRef.current = new AudioCtx();
-        masterGainRef.current = audioContextRef.current.createGain();
-        masterGainRef.current.connect(audioContextRef.current.destination);
-        const splitter = audioContextRef.current.createChannelSplitter(2);
-        masterGainRef.current.connect(splitter);
-        const analyserL = audioContextRef.current.createAnalyser(); analyserL.fftSize = 512;
-        const analyserR = audioContextRef.current.createAnalyser(); analyserR.fftSize = 512;
-        splitter.connect(analyserL, 0); splitter.connect(analyserR, 1);
-        analysersRef.current = { left: analyserL, right: analyserR };
+        const initAudio = async () => {
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            audioContextRef.current = new AudioCtx();
+            masterGainRef.current = audioContextRef.current.createGain();
+            masterGainRef.current.connect(audioContextRef.current.destination);
+            const splitter = audioContextRef.current.createChannelSplitter(2);
+            masterGainRef.current.connect(splitter);
+            const analyserL = audioContextRef.current.createAnalyser(); analyserL.fftSize = 512;
+            const analyserR = audioContextRef.current.createAnalyser(); analyserR.fftSize = 512;
+            splitter.connect(analyserL, 0); splitter.connect(analyserR, 1);
+            analysersRef.current = { left: analyserL, right: analyserR };
+
+            try {
+                await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js');
+                melodyStNodeRef.current = new SoundTouchNode(audioContextRef.current);
+                drumStNodeRef.current = new SoundTouchNode(audioContextRef.current);
+                melodyBusRef.current = audioContextRef.current.createGain();
+                drumBusRef.current = audioContextRef.current.createGain();
+
+                melodyBusRef.current.connect(melodyStNodeRef.current);
+                drumBusRef.current.connect(drumStNodeRef.current);
+                
+                melodyStNodeRef.current.connect(masterGainRef.current);
+                drumStNodeRef.current.connect(masterGainRef.current);
+            } catch (e) {
+                console.error("Failed to load SoundTouch processor", e);
+            }
+        };
+        initAudio();
         return () => { audioContextRef.current?.close(); };
     }, []);
 
+    const playbackRateRef = useRef<number>(1);
+    
     useEffect(() => {
         durationRef.current = duration; isPlayingRef.current = isPlaying; videoOffsetRef.current = videoOffset;
         tracksRef.current = tracks; videoDurationRef.current = videoDuration; videoEndTimeRef.current = videoEndTime;
@@ -123,7 +154,30 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         splitPointsRef.current = splitPoints; sectionsRef.current = sections; lyricsRef.current = lyrics; lyricsSettingsRef.current = lyricsSettings;
         activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
         playlistRef.current = playlist;
-    }, [duration, isPlaying, videoOffset, tracks, videoDuration, videoEndTime, videoFadeIn, videoFadeOut, cutRegions, splitPoints, sections, lyrics, lyricsSettings, activeSongId, songAnalysis, playlist]);
+        
+        if (melodyStNodeRef.current) {
+            melodyStNodeRef.current.pitchSemitones.value = pitchShift;
+            melodyStNodeRef.current.playbackRate.value = playbackRate;
+        }
+        if (drumStNodeRef.current) {
+            drumStNodeRef.current.pitchSemitones.value = 0;
+            drumStNodeRef.current.playbackRate.value = playbackRate;
+        }
+        
+        const oldRate = playbackRateRef.current;
+        if (oldRate !== playbackRate) {
+            playbackRateRef.current = playbackRate;
+            if (isPlayingRef.current && audioContextRef.current) {
+                const currCtxTime = audioContextRef.current.currentTime;
+                const now = (currCtxTime - startTimeRef.current) * oldRate;
+                startTimeRef.current = currCtxTime - (now / playbackRate);
+            }
+            sourceNodesRef.current.forEach(s => {
+                try { s.playbackRate.value = playbackRate; } catch(e) {}
+            });
+            if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+        }
+    }, [duration, isPlaying, videoOffset, tracks, videoDuration, videoEndTime, videoFadeIn, videoFadeOut, cutRegions, splitPoints, sections, lyrics, lyricsSettings, activeSongId, songAnalysis, playlist, pitchShift, playbackRate]);
 
     useEffect(() => { masterVolumeRefLocal.current = masterVolume; if (masterGainRef.current) masterGainRef.current.gain.value = masterVolume; }, [masterVolume]);
 
@@ -198,8 +252,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const g = audioContextRef.current!.createGain(); g.gain.value = t.muted || (solo && !t.soloed) ? 0 : t.volume;
             const p = audioContextRef.current!.createStereoPanner(); p.pan.value = t.pan || 0;
             const a = audioContextRef.current!.createAnalyser(); a.fftSize = 256;
-            s.connect(g); g.connect(a); a.connect(p); p.connect(masterGainRef.current!);
-            let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum); o = 0; } }
+            const isDrum = t.name.toLowerCase().match(/drum|bateria|perc/);
+            const targetBus = isDrum ? drumBusRef.current : melodyBusRef.current;
+            s.connect(g); g.connect(a); a.connect(p); 
+            if (targetBus) p.connect(targetBus); else p.connect(masterGainRef.current!);
+            
+            s.playbackRate.value = playbackRateRef.current;
+            let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum) / playbackRateRef.current; o = 0; } }
             try { s.start(w, o); } catch {} sourceNodesRef.current.set(t.id, s); gainNodesRef.current.set(t.id, g); pannerNodesRef.current.set(t.id, p); trackAnalysersRef.current.set(t.id, a);
         });
     }, []);
@@ -208,11 +267,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (isPlayingRef.current) { stopAudioInternal(); pauseTimeRef.current = currentTime; videoRef.current?.pause(); cancelAnimationFrame(animationFrameRef.current!); setIsPlaying(false); }
         else {
             let start = pauseTimeRef.current >= durationRef.current ? 0 : pauseTimeRef.current;
-            playAudio(start); startTimeRef.current = audioContextRef.current!.currentTime - start;
-            if (videoRef.current) { const vPos = start + videoOffsetRef.current; if (vPos >= 0) { videoRef.current.currentTime = vPos; videoRef.current.play().catch(() => {}); } else videoRef.current.currentTime = 0; }
+            playAudio(start); startTimeRef.current = audioContextRef.current!.currentTime - (start / playbackRateRef.current);
+            if (videoRef.current) { const vPos = start + videoOffsetRef.current; if (vPos >= 0) { videoRef.current.currentTime = vPos; videoRef.current.playbackRate = playbackRateRef.current; videoRef.current.play().catch(() => {}); } else videoRef.current.currentTime = 0; }
             setIsPlaying(true);
             const update = () => {
-                const now = audioContextRef.current!.currentTime - startTimeRef.current;
+                // Advance now by actual time elapsed * playback rate
+                const now = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
                 const vNow = now + videoOffsetRef.current;
                 const cut = cutRegionsRef.current.find(r => now >= r.start && now < r.end);
                 const hasV = tracksRef.current.some(t => t.isVideoAudio);
@@ -259,7 +319,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, [currentTime, playAudio]);
 
     const stop = useCallback(() => { stopAudioInternal(); videoRef.current?.pause(); if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoOffsetRef.current); pauseTimeRef.current = 0; setCurrentTime(0); setIsPlaying(false); cancelAnimationFrame(animationFrameRef.current!); loopStatusRef.current = null; lastLoopTriggerTimeRef.current = 0; }, []);
-    const seek = useCallback((t: number) => { const was = isPlayingRef.current; if (was) stopAudioInternal(); pauseTimeRef.current = t; setCurrentTime(t); lastLoopTriggerTimeRef.current = 0; if (videoRef.current) videoRef.current.currentTime = Math.max(0, t + videoOffsetRef.current); if (was) { playAudio(t); startTimeRef.current = audioContextRef.current!.currentTime - t; if (videoRef.current && (t + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); } }, [playAudio]);
+    const seek = useCallback((t: number) => { const was = isPlayingRef.current; if (was) stopAudioInternal(); pauseTimeRef.current = t; setCurrentTime(t); lastLoopTriggerTimeRef.current = 0; if (videoRef.current) videoRef.current.currentTime = Math.max(0, t + videoOffsetRef.current); if (was) { playAudio(t); startTimeRef.current = audioContextRef.current!.currentTime - (t / playbackRateRef.current); if (videoRef.current && (t + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); } }, [playAudio]);
 
     const setTrackVolume = (id: string, volume: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
     const setTrackPan = (id: string, pan: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));
@@ -514,7 +574,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     return (
         <AudioEngineContext.Provider value={{
-            tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections
+            tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections, pitchShift, setPitchShift, playbackRate, setPlaybackRate
         }}>
             {children}
         </AudioEngineContext.Provider>

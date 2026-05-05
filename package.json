@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@soundtouchjs/audio-worklet": "^1.0.10",
+    "@soundtouchjs/core": "^1.0.10",
     "@twick/live-player": "latest",
     "@twick/studio": "latest",
     "@twick/timeline": "latest",
@@ -18,6 +20,7 @@
     "react": "^18",
     "react-dom": "^18",
     "react-resizable-panels": "^4.7.5",
+    "soundtouchjs": "^0.3.0",
     "waviz": "latest",
     "web-audio-beat-detector": "^8.2.35"
   },
