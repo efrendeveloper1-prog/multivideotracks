@@ -24,11 +24,12 @@ export interface PanelSizes { main: Record<string, number>; left: Record<string,
 export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 } };
 export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'bottom', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'blur-in', idleAnimation: 'float-pulse-shine', exitAnimation: 'slide-down-stagger', kineticMode: 'none', kineticAnimation: 'wave', kineticStagger: 40, kineticExitAnimation: 'wave-out' };
 
-export interface Track { id: string; name: string; file: File | null; buffer?: AudioBuffer; volume: number; muted: boolean; soloed: boolean; color: string; isVideoAudio?: boolean; pan: number; }
+export interface Track { id: string; name: string; file: File | null; buffer?: AudioBuffer; volume: number; muted: boolean; soloed: boolean; color: string; isVideoAudio?: boolean; pan: number; outputChannel?: number; }
 export interface Song { id: string; title: string; artist: string; key: string; bpm: number; stemFiles: File[]; videoFile?: File | null; cachedTracks?: Track[]; cachedDuration?: number; cachedSections?: TimelineSection[]; cachedVideoDuration?: number; cachedVideoOffset?: number; cachedVideoEndTime?: number; cachedCutRegions?: CutRegion[]; cachedSplitPoints?: number[]; cachedLyrics?: LyricBlock[]; cachedLyricsSettings?: LyricsSettings; cachedVideoFadeIn?: number; cachedVideoFadeOut?: number; isPlaceholder?: boolean; analysis?: AudioAnalysis | null; }
 
 interface AudioEngineContextType {
     tracks: Track[]; isPlaying: boolean; currentTime: number; duration: number; addTrack: (file: File, name: string) => Promise<void>; addVideoTrack: (file: File) => Promise<void>; removeTrack: (id: string) => void; clearTracks: () => void; togglePlay: () => void; stop: () => void; seek: (time: number) => void; setTrackVolume: (id: string, volume: number) => void; setTrackPan: (id: string, pan: number) => void; toggleTrackMute: (id: string) => void; toggleTrackSolo: (id: string) => void; setVideoElement: (element: HTMLVideoElement | null) => void; masterVolume: number; setMasterVolume: (val: number) => void; videoDuration: number; trimVideoToAudio: () => void; videoOffset: number; setVideoOffset: (offset: number) => void; videoEndTime: number; setVideoEndTime: (time: number) => void; videoFadeIn: number; setVideoFadeIn: (val: number) => void; videoFadeOut: number; setVideoFadeOut: (val: number) => void; videoOpacity: number; cutRegions: CutRegion[]; setCutRegions: (regions: CutRegion[]) => void; splitPoints: number[]; setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>; addCutRegion: (region: CutRegion) => void; removeCutRegion: (index: number) => void; revertVideo: () => void; isInCutRegion: boolean; lyrics: LyricBlock[]; setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>; addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void; updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void; removeLyricBlock: (id: string) => void; clearLyrics: () => void; lyricsSettings: LyricsSettings; setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>; invertBackground: boolean; setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>; showLyrics: boolean; setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>; panelSizes: PanelSizes; setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>; layoutVersion: number; playlist: Song[]; activeSongId: string | null; addSongToPlaylist: (song: Song) => void; removeSongFromPlaylist: (id: string) => void; updateSongInPlaylist: (id: string, song: Song) => void; loadSong: (id: string) => Promise<void>; loadPreparedSong: (song: Song) => void; updateActiveSongCache: () => void; prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>; exportPreset: () => void; importPreset: (file: File) => Promise<void>; songAnalysis: AudioAnalysis | null; loadingProgress: number | null; getMasterLevels: () => [number, number]; getTrackLevel: (id: string) => number; isUploading: boolean; setIsUploading: (val: boolean) => void; uploadMessage: string; setUploadMessage: (msg: string) => void; processZipFile: (file: File) => Promise<void>; processVideoFile: (file: File) => Promise<void>; sections: TimelineSection[]; setSections: React.Dispatch<React.SetStateAction<TimelineSection[]>>; pitchShift: number; setPitchShift: (val: number) => void; playbackRate: number; setPlaybackRate: (val: number) => void;
+    audioOutputDeviceId: string; audioOutputMaxChannels: number; setAudioOutputDevice: (id: string) => Promise<void>; setTrackOutputChannel: (id: string, channel: number) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -63,6 +64,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [layoutVersion, setLayoutVersion] = useState<number>(0);
     const [pitchShift, setPitchShift] = useState<number>(0);
     const [playbackRate, setPlaybackRate] = useState<number>(1);
+    const [audioOutputDeviceId, setAudioOutputDeviceId] = useState<string>('default');
+    const [audioOutputMaxChannels, setAudioOutputMaxChannels] = useState<number>(2);
     const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('studioPanelSizes');
@@ -80,10 +83,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const masterGainRef = useRef<GainNode | null>(null);
     
     // Buses and ST nodes
-    const melodyStNodeRef = useRef<any>(null);
-    const drumStNodeRef = useRef<any>(null);
-    const melodyBusRef = useRef<GainNode | null>(null);
-    const drumBusRef = useRef<GainNode | null>(null);
+    const soundTouchNodeClassRef = useRef<any>(null);
+    const soundTouchNodesRef = useRef<Map<string, any>>(new Map());
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const startTimeRef = useRef<number>(0);
@@ -128,16 +129,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             try {
                 const { SoundTouchNode } = await import('@soundtouchjs/audio-worklet');
                 await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js');
-                melodyStNodeRef.current = new SoundTouchNode(audioContextRef.current);
-                drumStNodeRef.current = new SoundTouchNode(audioContextRef.current);
-                melodyBusRef.current = audioContextRef.current.createGain();
-                drumBusRef.current = audioContextRef.current.createGain();
-
-                melodyBusRef.current.connect(melodyStNodeRef.current);
-                drumBusRef.current.connect(drumStNodeRef.current);
-                
-                melodyStNodeRef.current.connect(masterGainRef.current);
-                drumStNodeRef.current.connect(masterGainRef.current);
+                soundTouchNodeClassRef.current = SoundTouchNode;
             } catch (e) {
                 console.error("Failed to load SoundTouch processor", e);
             }
@@ -155,14 +147,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         splitPointsRef.current = splitPoints; sectionsRef.current = sections; lyricsRef.current = lyrics; lyricsSettingsRef.current = lyricsSettings;
         activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
         playlistRef.current = playlist;
-        
-        if (melodyStNodeRef.current) {
-            melodyStNodeRef.current.pitchSemitones.value = pitchShift;
-            melodyStNodeRef.current.playbackRate.value = playbackRate;
-        }
-        if (drumStNodeRef.current) {
-            drumStNodeRef.current.pitchSemitones.value = 0;
-            drumStNodeRef.current.playbackRate.value = playbackRate;
+        if (soundTouchNodesRef.current) {
+            soundTouchNodesRef.current.forEach((st, id) => {
+                const t = tracksRef.current.find(x => x.id === id);
+                const isDrum = t?.name.toLowerCase().match(/drum|bateria|perc|click|guia|cue|guide/);
+                try {
+                    st.pitchSemitones.value = isDrum ? 0 : pitchShift;
+                    st.playbackRate.value = playbackRate;
+                } catch(e) {}
+            });
         }
         
         const oldRate = playbackRateRef.current;
@@ -240,6 +233,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const stopAudioInternal = () => {
         sourceNodesRef.current.forEach(s => { try { s.stop(); } catch {} }); sourceNodesRef.current.clear(); gainNodesRef.current.clear(); pannerNodesRef.current.clear(); trackAnalysersRef.current.clear();
+        soundTouchNodesRef.current.forEach(st => { try { st.disconnect(); } catch {} }); soundTouchNodesRef.current.clear();
         isInCutRegionRef.current = false; setIsInCutRegion(false); setVideoOpacity(1);
     };
 
@@ -247,22 +241,53 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (!audioContextRef.current || !masterGainRef.current) return;
         if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
         const solo = tracksRef.current.some(t => t.soloed);
+        
+        const maxCh = audioContextRef.current.destination.maxChannelCount;
+        const merger = audioContextRef.current.createChannelMerger(Math.max(2, maxCh));
+        merger.connect(audioContextRef.current.destination);
+
         tracksRef.current.forEach(t => {
             if (!t.buffer) return;
             const s = audioContextRef.current!.createBufferSource(); s.buffer = t.buffer;
             const g = audioContextRef.current!.createGain(); g.gain.value = t.muted || (solo && !t.soloed) ? 0 : t.volume;
             const p = audioContextRef.current!.createStereoPanner(); p.pan.value = t.pan || 0;
             const a = audioContextRef.current!.createAnalyser(); a.fftSize = 256;
-            const isDrum = t.name.toLowerCase().match(/drum|bateria|perc/);
-            const targetBus = isDrum ? drumBusRef.current : melodyBusRef.current;
-            s.connect(g); g.connect(a); a.connect(p); 
-            if (targetBus) p.connect(targetBus); else p.connect(masterGainRef.current!);
+            const isDrum = !!t.name.toLowerCase().match(/drum|bateria|perc|click|guia|cue|guide/);
+            
+            s.connect(g);
+            
+            if (soundTouchNodeClassRef.current) {
+                const st = new soundTouchNodeClassRef.current(audioContextRef.current!);
+                st.playbackRate.value = playbackRateRef.current;
+                st.pitchSemitones.value = isDrum ? 0 : pitchShift;
+                soundTouchNodesRef.current.set(t.id, st);
+                g.connect(st);
+                st.connect(a);
+            } else {
+                g.connect(a);
+            }
+            
+            a.connect(p);
+            
+            const targetChannel = t.outputChannel || 0;
+            if (targetChannel > 0 && targetChannel < maxCh) {
+                const splitter = audioContextRef.current!.createChannelSplitter(2);
+                p.connect(splitter);
+                splitter.connect(merger, 0, targetChannel);
+                if (targetChannel + 1 < maxCh) {
+                    splitter.connect(merger, 1, targetChannel + 1);
+                } else {
+                    splitter.connect(merger, 1, targetChannel);
+                }
+            } else {
+                p.connect(masterGainRef.current!);
+            }
             
             s.playbackRate.value = playbackRateRef.current;
             let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum) / playbackRateRef.current; o = 0; } }
             try { s.start(w, o); } catch {} sourceNodesRef.current.set(t.id, s); gainNodesRef.current.set(t.id, g); pannerNodesRef.current.set(t.id, p); trackAnalysersRef.current.set(t.id, a);
         });
-    }, []);
+    }, [pitchShift]);
 
     const togglePlay = useCallback(() => {
         if (isPlayingRef.current) { stopAudioInternal(); pauseTimeRef.current = currentTime; videoRef.current?.pause(); cancelAnimationFrame(animationFrameRef.current!); setIsPlaying(false); }
@@ -327,6 +352,36 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const toggleTrackMute = (id: string) => setTracks(prev => prev.map(t => t.id === id ? { ...t, muted: !t.muted } : t));
     const toggleTrackSolo = (id: string) => setTracks(prev => prev.map(t => t.id === id ? { ...t, soloed: !t.soloed } : t));
     const removeTrack = (id: string) => setTracks(prev => prev.filter(t => t.id !== id));
+
+    const setAudioOutputDevice = async (id: string) => {
+        if (!audioContextRef.current) return;
+        try {
+            if (typeof (audioContextRef.current as any).setSinkId === 'function') {
+                await (audioContextRef.current as any).setSinkId(id);
+                setAudioOutputDeviceId(id);
+                const maxChannels = audioContextRef.current.destination.maxChannelCount;
+                audioContextRef.current.destination.channelCount = maxChannels;
+                setAudioOutputMaxChannels(maxChannels);
+                if (isPlayingRef.current) {
+                    const t = currentTime;
+                    stop();
+                    setTimeout(() => seek(t), 100);
+                }
+            } else {
+                console.warn("setSinkId is not supported in this browser.");
+            }
+        } catch (e) {
+            console.error("Failed to set audio output device:", e);
+        }
+    };
+    const setTrackOutputChannel = (id: string, channel: number) => {
+        setTracks(prev => prev.map(t => t.id === id ? { ...t, outputChannel: channel } : t));
+        if (isPlayingRef.current) {
+            const t = currentTime;
+            stop();
+            setTimeout(() => seek(t), 50);
+        }
+    };
     const clearTracks = useCallback(() => { stop(); setTracks([]); setDuration(0); setVideoDuration(0); setLyrics([]); setSongAnalysis(null); }, []);
     const trimVideoToAudio = useCallback(() => { if (durationRef.current > 0) setVideoEndTime(durationRef.current); }, []);
 
@@ -575,7 +630,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     return (
         <AudioEngineContext.Provider value={{
-            tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections, pitchShift, setPitchShift, playbackRate, setPlaybackRate
+            tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections, pitchShift, setPitchShift, playbackRate, setPlaybackRate,
+            audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel
         }}>
             {children}
         </AudioEngineContext.Provider>
