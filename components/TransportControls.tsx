@@ -180,7 +180,7 @@ export const TransportControls: React.FC = () => {
                         value={pitchShift} 
                         onChange={(e) => setPitchShift(Number(e.target.value))}
                         disabled={!songAnalysis}
-                        className="bg-transparent outline-none cursor-pointer text-white"
+                        className="bg-transparent outline-none cursor-pointer text-white flex-1"
                     >
                         {!songAnalysis && <option value={0}>--</option>}
                         {songAnalysis && pitchOptions.map(opt => (
@@ -189,6 +189,14 @@ export const TransportControls: React.FC = () => {
                             </option>
                         ))}
                     </select>
+                    <button 
+                        onClick={() => setPitchShift(0)} 
+                        disabled={!songAnalysis || pitchShift === 0}
+                        className={`ml-1 p-1 rounded hover:bg-green-800/50 transition-colors ${pitchShift === 0 ? 'opacity-30 cursor-default' : 'opacity-100 cursor-pointer text-white'}`}
+                        title="Restablecer Tono"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    </button>
                 </div>
                 <div className={`flex items-center px-2 py-1 rounded text-[10px] sm:text-xs font-bold ${songAnalysis ? 'bg-blue-900/40 text-blue-400 border border-blue-800/50' : 'bg-gray-700 text-gray-400'}`}>
                     <span className="mr-2">TEMPO:</span>
@@ -203,6 +211,14 @@ export const TransportControls: React.FC = () => {
                         disabled={!songAnalysis}
                     />
                     <span className="ml-2 w-12 text-right">{Math.round((songAnalysis?.bpm || 120) * playbackRate)} BPM</span>
+                    <button 
+                        onClick={() => setPlaybackRate(1)} 
+                        disabled={!songAnalysis || playbackRate === 1}
+                        className={`ml-1 p-1 rounded hover:bg-blue-800/50 transition-colors ${playbackRate === 1 ? 'opacity-30 cursor-default' : 'opacity-100 cursor-pointer text-white'}`}
+                        title="Restablecer Tempo"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    </button>
                 </div>
             </div>
         </div>
