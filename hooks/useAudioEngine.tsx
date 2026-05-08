@@ -1,7 +1,7 @@
+"use client";
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
-import { SoundTouchNode } from '@soundtouchjs/audio-worklet';
 
 // Types
 export interface CutRegion { start: number; end: number; }
@@ -126,6 +126,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             analysersRef.current = { left: analyserL, right: analyserR };
 
             try {
+                const { SoundTouchNode } = await import('@soundtouchjs/audio-worklet');
                 await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js');
                 melodyStNodeRef.current = new SoundTouchNode(audioContextRef.current);
                 drumStNodeRef.current = new SoundTouchNode(audioContextRef.current);
