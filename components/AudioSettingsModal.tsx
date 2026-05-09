@@ -43,7 +43,7 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
         return () => navigator.mediaDevices.removeEventListener('devicechange', getDevices);
     }, []);
 
-    const channelPairs = [];
+    const channelPairs: number[] = [];
     for (let i = 0; i < Math.max(2, audioOutputMaxChannels); i += 2) {
         channelPairs.push(i);
     }
