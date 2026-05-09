@@ -415,13 +415,17 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     sections: isAct ? sectionsRef.current : s.cachedSections,
                     lyrics: isAct ? lyricsRef.current : s.cachedLyrics, 
                     lyricsSettings: isAct ? lyricsSettingsRef.current : s.cachedLyricsSettings, 
-                    tracks: (isAct ? tracksRef.current : s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio })) 
+                    tracks: (isAct ? tracksRef.current : s.cachedTracks || []).map(t => ({ name: t.name, volume: t.volume, pan: t.pan, muted: t.muted, soloed: t.soloed, isVideoAudio: t.isVideoAudio, outputChannel: t.outputChannel })) 
                 };
             }), 
-            panelSizes 
+            panelSizes,
+            audioOutputDeviceId,
+            audioOutputMaxChannels,
+            showLyrics,
+            invertBackground
         };
         const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `multitrack-preset-${new Date().toISOString().split('T')[0]}.json`; a.click();
-    }, [activeSongId, playlist, panelSizes]);
+    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground]);
 
     const importPreset = useCallback(async (file: File) => {
         try { 
@@ -446,7 +450,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                         cachedLyrics: ps.lyrics,
                         cachedLyricsSettings: ps.lyricsSettings,
                         analysis: ps.analysis || (ps.bpm || ps.key ? { bpm: ps.bpm || 0, key: ps.key || '', scale: '', keyDisplay: ps.key || '' } : null), 
-                        cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, color: getTrackColor(pt.name) })) 
+                        cachedTracks: ps.tracks.map((pt: any) => ({ id: crypto.randomUUID(), name: pt.name, volume: pt.volume, pan: pt.pan || 0, muted: pt.muted, soloed: pt.soloed, isVideoAudio: pt.isVideoAudio, outputChannel: pt.outputChannel, color: getTrackColor(pt.name) })) 
                     };
                     
                     if (existingIndex !== -1) {
@@ -459,7 +463,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 return newPlaylist;
             });
             
+            
             if (p.activeSongId) setActiveSongId(p.activeSongId); 
+            if (p.audioOutputDeviceId) {
+                setAudioOutputDevice(p.audioOutputDeviceId);
+            }
+            if (p.showLyrics !== undefined) setShowLyrics(p.showLyrics);
+            if (p.invertBackground !== undefined) setInvertBackground(p.invertBackground);
         } catch { alert("Error al importar."); }
     }, []);
 
@@ -478,14 +488,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             let vol = 1; let pan = name.toLowerCase().match(/click|guia|cue|guide/) ? -1 : 1;
             let mute = false; let solo = false;
             
+            let outCh: number | undefined;
+
             if (placeholder && placeholder.cachedTracks) {
                 const pt = placeholder.cachedTracks.find(t => t.name === name);
                 if (pt) {
-                    vol = pt.volume; pan = pt.pan; mute = pt.muted; solo = pt.soloed;
+                    vol = pt.volume; pan = pt.pan; mute = pt.muted; solo = pt.soloed; outCh = pt.outputChannel;
                 }
             }
 
-            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: vol, pan, muted: mute, soloed: solo, color: getTrackColor(name) });
+            nt.push({ id: crypto.randomUUID(), name, file: f, buffer: buf, volume: vol, pan, muted: mute, soloed: solo, outputChannel: outCh, color: getTrackColor(name) });
             nd = Math.max(nd, buf.duration); setLoadingProgress(Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100));
         }
 
