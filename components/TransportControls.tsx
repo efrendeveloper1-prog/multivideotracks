@@ -1,7 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 
 export const TransportControls: React.FC = () => {
+    const [isEditingTempo, setIsEditingTempo] = useState(false);
+    const [tempoInputValue, setTempoInputValue] = useState("");
+
     const {
         isPlaying,
         togglePlay,
@@ -165,9 +168,9 @@ export const TransportControls: React.FC = () => {
             </div>
 
             {/* Song Info / LCD Display */}
-            <div className="flex-1 mx-2 sm:mx-4 bg-gray-900 p-2 rounded border border-gray-600 font-mono text-green-400 flex flex-col items-end justify-center min-w-0">
-                <div className="text-lg sm:text-2xl">{fmt(currentTime)} / {fmt(duration)}</div>
-                <div className="text-[10px] sm:text-sm text-gray-400">
+            <div className="flex-1 mx-2 sm:mx-4 bg-gray-900 px-3 py-2 rounded border border-gray-600 font-mono text-green-400 flex flex-col items-end justify-center min-w-max shrink-0">
+                <div className="text-base sm:text-xl md:text-2xl whitespace-nowrap">{fmt(currentTime)} / {fmt(duration)}</div>
+                <div className="text-[10px] sm:text-xs md:text-sm text-gray-400 whitespace-nowrap">
                     {timeSigDisplay} • {bpmDisplay} BPM
                 </div>
             </div>
@@ -210,7 +213,46 @@ export const TransportControls: React.FC = () => {
                         className="w-16 sm:w-20 cursor-pointer"
                         disabled={!songAnalysis}
                     />
-                    <span className="ml-2 w-12 text-right">{Math.round((songAnalysis?.bpm || 120) * playbackRate)} BPM</span>
+                    {isEditingTempo ? (
+                        <input
+                            type="number"
+                            className="ml-2 w-14 text-right bg-gray-800 text-white rounded outline-none border border-blue-500 px-1"
+                            value={tempoInputValue}
+                            onChange={(e) => setTempoInputValue(e.target.value)}
+                            onBlur={() => {
+                                const newBpm = parseFloat(tempoInputValue);
+                                if (!isNaN(newBpm) && songAnalysis?.bpm) {
+                                    setPlaybackRate(newBpm / songAnalysis.bpm);
+                                }
+                                setIsEditingTempo(false);
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    const newBpm = parseFloat(tempoInputValue);
+                                    if (!isNaN(newBpm) && songAnalysis?.bpm) {
+                                        setPlaybackRate(newBpm / songAnalysis.bpm);
+                                    }
+                                    setIsEditingTempo(false);
+                                } else if (e.key === 'Escape') {
+                                    setIsEditingTempo(false);
+                                }
+                            }}
+                            autoFocus
+                        />
+                    ) : (
+                        <span 
+                            className="ml-2 w-14 text-right cursor-text hover:text-blue-300 transition-colors"
+                            onDoubleClick={() => {
+                                if (songAnalysis) {
+                                    setTempoInputValue(Math.round(songAnalysis.bpm * playbackRate).toString());
+                                    setIsEditingTempo(true);
+                                }
+                            }}
+                            title="Doble clic para editar"
+                        >
+                            {Math.round((songAnalysis?.bpm || 120) * playbackRate)} BPM
+                        </span>
+                    )}
                     <button 
                         onClick={() => setPlaybackRate(1)} 
                         disabled={!songAnalysis || playbackRate === 1}

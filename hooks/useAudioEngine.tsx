@@ -148,9 +148,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
         playlistRef.current = playlist;
         if (soundTouchNodesRef.current) {
-            soundTouchNodesRef.current.forEach((st, id) => {
-                const t = tracksRef.current.find(x => x.id === id);
-                const isDrum = t?.name.toLowerCase().match(/drum|bateria|perc|click|guia|cue|guide/);
+            soundTouchNodesRef.current.forEach((st, key) => {
+                const isDrum = key.endsWith('_true');
                 try {
                     st.pitchSemitones.value = isDrum ? 0 : pitchShift;
                     st.playbackRate.value = playbackRate;
@@ -246,6 +245,41 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const merger = audioContextRef.current.createChannelMerger(Math.max(2, maxCh));
         merger.connect(audioContextRef.current.destination);
 
+        const buses = new Map<string, GainNode>();
+        
+        const getBus = (targetChannel: number, isDrum: boolean) => {
+            const key = `${targetChannel}_${isDrum}`;
+            if (!buses.has(key)) {
+                const busGain = audioContextRef.current!.createGain();
+                let outNode: AudioNode = busGain;
+
+                if (soundTouchNodeClassRef.current) {
+                    const st = new soundTouchNodeClassRef.current(audioContextRef.current!);
+                    st.playbackRate.value = playbackRateRef.current;
+                    st.pitchSemitones.value = isDrum ? 0 : pitchShift;
+                    soundTouchNodesRef.current.set(key, st);
+                    busGain.connect(st);
+                    outNode = st;
+                }
+
+                if (targetChannel > 0 && targetChannel < maxCh) {
+                    const splitter = audioContextRef.current!.createChannelSplitter(2);
+                    outNode.connect(splitter);
+                    splitter.connect(merger, 0, targetChannel);
+                    if (targetChannel + 1 < maxCh) {
+                        splitter.connect(merger, 1, targetChannel + 1);
+                    } else {
+                        splitter.connect(merger, 1, targetChannel);
+                    }
+                } else {
+                    outNode.connect(masterGainRef.current!);
+                }
+
+                buses.set(key, busGain);
+            }
+            return buses.get(key)!;
+        };
+
         tracksRef.current.forEach(t => {
             if (!t.buffer) return;
             const s = audioContextRef.current!.createBufferSource(); s.buffer = t.buffer;
@@ -255,33 +289,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const isDrum = !!t.name.toLowerCase().match(/drum|bateria|perc|click|guia|cue|guide/);
             
             s.connect(g);
-            
-            if (soundTouchNodeClassRef.current) {
-                const st = new soundTouchNodeClassRef.current(audioContextRef.current!);
-                st.playbackRate.value = playbackRateRef.current;
-                st.pitchSemitones.value = isDrum ? 0 : pitchShift;
-                soundTouchNodesRef.current.set(t.id, st);
-                g.connect(st);
-                st.connect(a);
-            } else {
-                g.connect(a);
-            }
-            
+            g.connect(a);
             a.connect(p);
             
             const targetChannel = t.outputChannel || 0;
-            if (targetChannel > 0 && targetChannel < maxCh) {
-                const splitter = audioContextRef.current!.createChannelSplitter(2);
-                p.connect(splitter);
-                splitter.connect(merger, 0, targetChannel);
-                if (targetChannel + 1 < maxCh) {
-                    splitter.connect(merger, 1, targetChannel + 1);
-                } else {
-                    splitter.connect(merger, 1, targetChannel);
-                }
-            } else {
-                p.connect(masterGainRef.current!);
-            }
+            const bus = getBus(targetChannel, isDrum);
+            p.connect(bus);
             
             s.playbackRate.value = playbackRateRef.current;
             let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum) / playbackRateRef.current; o = 0; } }
@@ -296,6 +309,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             playAudio(start); startTimeRef.current = audioContextRef.current!.currentTime - (start / playbackRateRef.current);
             if (videoRef.current) { const vPos = start + videoOffsetRef.current; if (vPos >= 0) { videoRef.current.currentTime = vPos; videoRef.current.playbackRate = playbackRateRef.current; videoRef.current.play().catch(() => {}); } else videoRef.current.currentTime = 0; }
             setIsPlaying(true);
+            let lastRenderTime = 0;
             const update = () => {
                 // Advance now by actual time elapsed * playback rate
                 const now = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
@@ -304,7 +318,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const hasV = tracksRef.current.some(t => t.isVideoAudio);
                 const inactive = !!cut || (hasV && (now >= videoEndTimeRef.current || vNow >= videoDurationRef.current || vNow < 0));
                 let op = 1; if (inactive) op = 0; else { const vStart = Math.max(0, -videoOffsetRef.current), fi = videoFadeInRef.current, fo = videoFadeOutRef.current; if (fi > 0 && now < vStart + fi) op = (now - vStart) / fi; else if (fo > 0 && now > videoEndTimeRef.current - fo) op = (videoEndTimeRef.current - now) / fo; }
-                setVideoOpacity(op);
+                
                 if (inactive) { if (!isInCutRegionRef.current) { isInCutRegionRef.current = true; setIsInCutRegion(true); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(0, 0, 0.02); }); videoRef.current?.pause(); } }
                 else { const solo = tracksRef.current.some(t => t.soloed); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(t.muted || (solo && !t.soloed) ? 0 : t.volume * op, 0, 0.02); }); if (isInCutRegionRef.current) { isInCutRegionRef.current = false; setIsInCutRegion(false); if (videoRef.current && vNow >= 0 && vNow < videoDurationRef.current) { videoRef.current.currentTime = vNow; videoRef.current.play().catch(() => {}); } } }
                 
@@ -339,7 +353,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 }
 
                 if (now >= durationRef.current && durationRef.current > 0) { stop(); return; }
-                setCurrentTime(now); animationFrameRef.current = requestAnimationFrame(update);
+
+                const sysNow = performance.now();
+                if (sysNow - lastRenderTime > 33) {
+                    setVideoOpacity(op);
+                    setCurrentTime(now);
+                    lastRenderTime = sysNow;
+                }
+
+                animationFrameRef.current = requestAnimationFrame(update);
             }; animationFrameRef.current = requestAnimationFrame(update);
         }
     }, [currentTime, playAudio]);
