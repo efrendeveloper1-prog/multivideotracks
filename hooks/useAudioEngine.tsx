@@ -691,7 +691,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const getRecordingTimeDomainData = useCallback((dataArray: Float32Array) => {
         if (recordingAnalyserRef.current) {
-            recordingAnalyserRef.current.getFloatTimeDomainData(dataArray);
+            recordingAnalyserRef.current.getFloatTimeDomainData(dataArray as any);
         } else {
             dataArray.fill(0);
         }
