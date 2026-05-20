@@ -20,7 +20,10 @@ export const TransportControls: React.FC = () => {
         pitchShift,
         setPitchShift,
         playbackRate,
-        setPlaybackRate
+        setPlaybackRate,
+        isRecording,
+        startRecording,
+        stopRecording
     } = useAudioEngine();
 
     // Setup Spacebar keyboard shortcut for Play/Pause
@@ -150,6 +153,25 @@ export const TransportControls: React.FC = () => {
                     ) : (
                         <div className="w-0 h-0 border-t-[10px] border-t-transparent border-l-[20px] border-l-white border-b-[10px] border-b-transparent ml-1 sm:border-t-[12px] sm:border-l-[24px] sm:border-b-[12px]"></div>
                     )}
+                </button>
+
+                {/* Record Button */}
+                <button
+                    onClick={() => {
+                        if (isRecording) {
+                            stopRecording();
+                            if (isPlaying) togglePlay();
+                        } else {
+                            startRecording();
+                        }
+                    }}
+                    className={`w-14 h-14 sm:w-16 sm:h-16 rounded-lg flex items-center justify-center shadow-lg transition-all duration-300
+                        ${isRecording 
+                            ? 'bg-red-600 hover:bg-red-500 animate-pulse shadow-red-900/50' 
+                            : 'bg-gray-700 hover:bg-gray-600 active:bg-gray-800 shadow-lg'}`}
+                    title="Grabar Audio (Micrófono)"
+                >
+                    <div className={`w-4 h-4 sm:w-6 sm:h-6 rounded-full transition-colors duration-300 ${isRecording ? 'bg-white' : 'bg-red-500'}`}></div>
                 </button>
 
                 {/* Next Button */}

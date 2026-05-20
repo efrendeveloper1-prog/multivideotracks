@@ -30,6 +30,8 @@ export interface Song { id: string; title: string; artist: string; key: string; 
 interface AudioEngineContextType {
     tracks: Track[]; isPlaying: boolean; currentTime: number; duration: number; addTrack: (file: File, name: string) => Promise<void>; addVideoTrack: (file: File) => Promise<void>; removeTrack: (id: string) => void; clearTracks: () => void; togglePlay: () => void; stop: () => void; seek: (time: number) => void; setTrackVolume: (id: string, volume: number) => void; setTrackPan: (id: string, pan: number) => void; toggleTrackMute: (id: string) => void; toggleTrackSolo: (id: string) => void; setVideoElement: (element: HTMLVideoElement | null) => void; masterVolume: number; setMasterVolume: (val: number) => void; videoDuration: number; trimVideoToAudio: () => void; videoOffset: number; setVideoOffset: (offset: number) => void; videoEndTime: number; setVideoEndTime: (time: number) => void; videoFadeIn: number; setVideoFadeIn: (val: number) => void; videoFadeOut: number; setVideoFadeOut: (val: number) => void; videoOpacity: number; cutRegions: CutRegion[]; setCutRegions: (regions: CutRegion[]) => void; splitPoints: number[]; setSplitPoints: React.Dispatch<React.SetStateAction<number[]>>; addCutRegion: (region: CutRegion) => void; removeCutRegion: (index: number) => void; revertVideo: () => void; isInCutRegion: boolean; lyrics: LyricBlock[]; setLyrics: React.Dispatch<React.SetStateAction<LyricBlock[]>>; addLyricBlock: (block: Omit<LyricBlock, 'id'>) => void; updateLyricBlock: (id: string, updates: Partial<LyricBlock>) => void; removeLyricBlock: (id: string) => void; clearLyrics: () => void; lyricsSettings: LyricsSettings; setLyricsSettings: React.Dispatch<React.SetStateAction<LyricsSettings>>; invertBackground: boolean; setInvertBackground: React.Dispatch<React.SetStateAction<boolean>>; showLyrics: boolean; setShowLyrics: React.Dispatch<React.SetStateAction<boolean>>; panelSizes: PanelSizes; setPanelSizes: React.Dispatch<React.SetStateAction<PanelSizes>>; layoutVersion: number; playlist: Song[]; activeSongId: string | null; addSongToPlaylist: (song: Song) => void; removeSongFromPlaylist: (id: string) => void; updateSongInPlaylist: (id: string, song: Song) => void; loadSong: (id: string) => Promise<void>; loadPreparedSong: (song: Song) => void; updateActiveSongCache: () => void; prepareSongCache: (song: Song, placeholderSettings?: Song) => Promise<Song>; exportPreset: () => void; importPreset: (file: File) => Promise<void>; songAnalysis: AudioAnalysis | null; loadingProgress: number | null; getMasterLevels: () => [number, number]; getTrackLevel: (id: string) => number; isUploading: boolean; setIsUploading: (val: boolean) => void; uploadMessage: string; setUploadMessage: (msg: string) => void; processZipFile: (file: File) => Promise<void>; processVideoFile: (file: File) => Promise<void>; sections: TimelineSection[]; setSections: React.Dispatch<React.SetStateAction<TimelineSection[]>>; pitchShift: number; setPitchShift: (val: number) => void; playbackRate: number; setPlaybackRate: (val: number) => void;
     audioOutputDeviceId: string; audioOutputMaxChannels: number; setAudioOutputDevice: (id: string) => Promise<void>; setTrackOutputChannel: (id: string, channel: number) => void;
+    isRecording: boolean; startRecording: () => void; stopRecording: () => void; downloadTrack: (id: string) => void;
+    getRecordingTimeDomainData: (dataArray: Float32Array) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -66,6 +68,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [playbackRate, setPlaybackRate] = useState<number>(1);
     const [audioOutputDeviceId, setAudioOutputDeviceId] = useState<string>('default');
     const [audioOutputMaxChannels, setAudioOutputMaxChannels] = useState<number>(2);
+    const [isRecording, setIsRecording] = useState<boolean>(false);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const recordingAnalyserRef = useRef<AnalyserNode | null>(null);
+    const recordedChunksRef = useRef<Blob[]>([]);
     const [panelSizes, setPanelSizes] = useState<PanelSizes>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('studioPanelSizes');
@@ -626,6 +632,71 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         return Math.min(1, Math.sqrt(s/256) * 6);
     };
 
+    const downloadTrack = useCallback((id: string) => {
+        const track = tracksRef.current.find(t => t.id === id);
+        if (track && track.file) {
+            const url = URL.createObjectURL(track.file);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = track.file.name;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+    }, []);
+
+    const startRecording = useCallback(async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (audioContextRef.current) {
+                const source = audioContextRef.current.createMediaStreamSource(stream);
+                const analyser = audioContextRef.current.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+                recordingAnalyserRef.current = analyser;
+            }
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            recordedChunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+                const file = new File([blob], `VOZ GRABADA - ${new Date().toISOString().replace(/:/g, '-')}.webm`, { type: 'audio/webm' });
+                await addTrack(file, "VOZ GRABADA");
+                stream.getTracks().forEach(t => t.stop());
+            };
+
+            mediaRecorder.start();
+            setIsRecording(true);
+            
+            if (!isPlayingRef.current) {
+                togglePlay();
+            }
+        } catch (e) {
+            console.error("Error starting recording:", e);
+            alert("No se pudo acceder al micrófono.");
+        }
+    }, [addTrack, togglePlay]);
+
+    const stopRecording = useCallback(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+        }
+        setIsRecording(false);
+        recordingAnalyserRef.current = null;
+    }, []);
+
+    const getRecordingTimeDomainData = useCallback((dataArray: Float32Array) => {
+        if (recordingAnalyserRef.current) {
+            recordingAnalyserRef.current.getFloatTimeDomainData(dataArray);
+        } else {
+            dataArray.fill(0);
+        }
+    }, []);
+
     const processZipFile = async (file: File) => {
         setIsUploading(true); setUploadMessage('Extrayendo ZIP...');
         const zip = new JSZip(), contents = await zip.loadAsync(file), stems: File[] = []; let vid: File | undefined;
@@ -665,7 +736,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return (
         <AudioEngineContext.Provider value={{
             tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections, pitchShift, setPitchShift, playbackRate, setPlaybackRate,
-            audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel
+            audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel,
+            isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData
         }}>
             {children}
         </AudioEngineContext.Provider>

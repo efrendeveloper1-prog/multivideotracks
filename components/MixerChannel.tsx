@@ -98,7 +98,7 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
     onMuteToggle,
     onSoloToggle,
 }) => {
-    const { getTrackLevel, isPlaying } = useAudioEngine();
+    const { getTrackLevel, isPlaying, downloadTrack, removeTrack } = useAudioEngine();
     const meterRef = useRef<HTMLDivElement>(null);
     const baseColor = getTrackColor(name);
 
@@ -145,6 +145,22 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
                 </div>
 
                 <div className={`flex-1 relative rounded overflow-hidden bg-gray-700/50 border border-gray-600 group`}>
+                    {/* Delete button */}
+                    <button 
+                        className="absolute top-1 right-1 z-20 text-gray-400 hover:text-red-500 bg-black/40 hover:bg-black/80 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm('¿Estás seguro de que quieres eliminar esta pista?')) {
+                                removeTrack(trackId);
+                            }
+                        }}
+                        title="Eliminar pista"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                        </svg>
+                    </button>
+
                     {/* Background "Fader" Level */}
                     <div
                         className={`absolute bottom-0 left-0 w-full transition-all duration-100 ease-out opacity-60 ${baseColor}`}
@@ -199,6 +215,18 @@ export const MixerChannel: React.FC<MixerChannelProps> = ({
                         title="Solo"
                     >
                         S
+                    </button>
+                </div>
+                {/* Download Button */}
+                <div className="flex px-1 mt-1">
+                    <button
+                        onClick={() => downloadTrack(trackId)}
+                        className="flex-1 h-6 rounded bg-[#2A2A2A] text-gray-400 hover:bg-[#3A3A3A] hover:text-white border border-gray-700/50 flex items-center justify-center transition-colors"
+                        title="Descargar pista localmente"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                            <path fillRule="evenodd" d="M10 3a.75.75 0 01.75.75v6.879l2.8-2.81a.75.75 0 111.06 1.06l-4.125 4.125a.75.75 0 01-1.06 0L5.3 8.88a.75.75 0 111.06-1.06l2.89 2.9V3.75A.75.75 0 0110 3zM4 14a.75.75 0 01.75.75v1.5a.75.75 0 00.75.75h9a.75.75 0 00.75-.75v-1.5a.75.75 0 011.5 0v1.5A2.25 2.25 0 0114.5 18h-9A2.25 2.25 0 013 15.75v-1.5A.75.75 0 014 14z" clipRule="evenodd" />
+                        </svg>
                     </button>
                 </div>
             </div>

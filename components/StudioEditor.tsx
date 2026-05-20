@@ -14,6 +14,7 @@ import { LyricsTimelineTrack } from './LyricsTimelineTrack';
 import { Group, Panel, Separator, PanelImperativeHandle } from 'react-resizable-panels';
 import { LyricsRenderer } from './LyricsRenderer';
 import { AudioSettingsModal } from './AudioSettingsModal';
+import { RealTimeRecordingWaveform } from './RealTimeRecordingWaveform';
 
 const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDoubleClick?: () => void }> = ({ orientation, onDoubleClick }) => {
     return (
@@ -46,7 +47,7 @@ const EditorContent: React.FC = () => {
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         sections, setSections,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
-        invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion
+        invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, isRecording
     } = useAudioEngine();
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
@@ -114,7 +115,7 @@ const EditorContent: React.FC = () => {
     const hasLyrics = lyrics.length > 0;
     const videoTrackInfo = tracks.find(t => t.name === "VIDEO TRACK");
     const hasVideoTrack = !!videoTrackInfo;
-    const tlPanelsCount = (hasLyrics ? 1 : 0) + (hasVideoTrack ? 1 : 0) + 1;
+    const tlPanelsCount = (hasLyrics ? 1 : 0) + (hasVideoTrack ? 1 : 0) + 1 + (isRecording ? 1 : 0);
     
     const safeTlSizes = panelSizes.timeline;
 
@@ -910,6 +911,15 @@ const EditorContent: React.FC = () => {
                                     </div>
                                 </div>
                             </Panel>
+
+                            {isRecording && (
+                                <>
+                                    <DividerHandle orientation="horizontal" />
+                                    <Panel id="tl-recording" minSize={15} className="relative flex flex-col shrink-0 min-h-[40px] overflow-hidden bg-gray-950 border-t border-red-500/50 shadow-[inset_0_0_15px_rgba(239,68,68,0.2)]">
+                                        <RealTimeRecordingWaveform />
+                                    </Panel>
+                                </>
+                            )}
                         </Group>
 
                         {/* ── Overlays (all absolute, full-height of timeline container) ── */}
