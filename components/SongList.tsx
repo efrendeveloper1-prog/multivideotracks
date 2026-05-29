@@ -90,17 +90,7 @@ export const SongList: React.FC = () => {
             const dirHandle = await (window as any).showDirectoryPicker({
                 mode: 'read'
             });
-            // We can't directly set global isUploading here but we can use local if we want,
-            // or better yet, maybe just accept it's a separate operation.
-            // Actually, for simplicity, I'll keep the local progress indications if needed,
-            // but the prompt asked to centralize.
-            // Let's assume the user wants the global "isUploading" to reflect this too.
-            // However, useAudioEngine doesn't expose setters for isUploading. 
-            // I should probably add them if needed, or just use the processZipFile which DOES set them.
-            // For auto-locate, it's a loop.
-            
-            // For now, let's keep it simple and just use the prepareSongCache which is global.
-            
+
             const filesToProcess: File[] = [];
             for await (const entry of dirHandle.values()) {
                 if (entry.kind === 'file' && entry.name.match(/\.(zip)$/i)) {
@@ -109,49 +99,92 @@ export const SongList: React.FC = () => {
             }
 
             const missingSongs = playlist.filter(s => s.isPlaceholder);
-            let processedCount = 0;
+            
+            // Mark all missing songs as 'searching' initially (or 'not_found' if ZIP isn't there)
+            setPlaylist(prev => prev.map(s => {
+                if (s.isPlaceholder) {
+                    const hasZip = filesToProcess.some(f => f.name.toLowerCase() === `${s.title.toLowerCase()}.zip`);
+                    return {
+                        ...s,
+                        locateStatus: hasZip ? 'pending' : 'not_found',
+                        locateProgress: 0
+                    };
+                }
+                return s;
+            }));
 
             for (const missingSong of missingSongs) {
                 const matchingZip = filesToProcess.find(f => f.name.toLowerCase() === `${missingSong.title.toLowerCase()}.zip`);
-                if (matchingZip) {
-                    const zip = new JSZip();
-                    const contents = await zip.loadAsync(matchingZip);
-                    
-                    const stemFiles: File[] = [];
-                    let videoFile: File | undefined;
-                    const promises: Promise<void>[] = [];
+                if (!matchingZip) continue;
 
-                    contents.forEach((relativePath, fileEntry) => {
-                        if (fileEntry.dir) return;
-                        if (relativePath.match(/\.(wav|mp3)$/i)) {
-                            promises.push(
-                                fileEntry.async('blob').then(blob => {
-                                    stemFiles.push(new File([blob], relativePath.split('/').pop() || 'track', { type: blob.type || 'audio/mpeg' }));
-                                })
-                            );
-                        } else if (relativePath.match(/\.(mp4|mov|webm|avi)$/i)) {
-                            promises.push(
-                                fileEntry.async('blob').then(blob => {
-                                    videoFile = new File([blob], relativePath.split('/').pop() || 'video', { type: blob.type || 'video/mp4' });
-                                })
-                            );
-                        }
-                    });
+                // Mark as unzipping
+                setPlaylist(prev => prev.map(s => s.id === missingSong.id ? { ...s, locateStatus: 'unzipping', locateProgress: 0 } : s));
 
-                    await Promise.all(promises);
+                const zip = new JSZip();
+                const contents = await zip.loadAsync(matchingZip);
+                
+                const stemFiles: File[] = [];
+                let videoFile: File | undefined;
+                const promises: Promise<void>[] = [];
 
-                    let updatedSong: Song = { ...missingSong, stemFiles, videoFile };
-                    updatedSong = await prepareSongCache(updatedSong, missingSong);
-                    updateSongInPlaylist(updatedSong.id, updatedSong);
-                    processedCount++;
+                // Filter files inside ZIP to extract
+                const entriesToExtract = Object.keys(contents.files).filter(relativePath => {
+                    const fileEntry = contents.files[relativePath];
+                    return !fileEntry.dir && !!relativePath.match(/\.(wav|mp3|mp4|mov|webm|avi)$/i);
+                });
+                const totalFiles = entriesToExtract.length;
+                let completedFilesCount = 0;
+
+                const updateUnzipProgress = () => {
+                    completedFilesCount++;
+                    const progress = totalFiles > 0 ? Math.round((completedFilesCount / totalFiles) * 40) : 40;
+                    setPlaylist(prev => prev.map(s => s.id === missingSong.id ? { ...s, locateStatus: 'unzipping', locateProgress: progress } : s));
+                };
+
+                for (const relativePath of entriesToExtract) {
+                    const fileEntry = contents.files[relativePath];
+                    if (relativePath.match(/\.(wav|mp3)$/i)) {
+                        promises.push(
+                            fileEntry.async('blob').then(blob => {
+                                stemFiles.push(new File([blob], relativePath.split('/').pop() || 'track', { type: blob.type || 'audio/mpeg' }));
+                                updateUnzipProgress();
+                            })
+                        );
+                    } else if (relativePath.match(/\.(mp4|mov|webm|avi)$/i)) {
+                        promises.push(
+                            fileEntry.async('blob').then(blob => {
+                                videoFile = new File([blob], relativePath.split('/').pop() || 'video', { type: blob.type || 'video/mp4' });
+                                updateUnzipProgress();
+                            })
+                        );
+                    }
                 }
+
+                await Promise.all(promises);
+
+                // Prepare cache (decoding + audio analysis)
+                let updatedSong: Song = { 
+                    ...missingSong, 
+                    stemFiles, 
+                    videoFile,
+                    locateStatus: 'decoding',
+                    locateProgress: 40
+                };
+
+                updatedSong = await prepareSongCache(updatedSong, missingSong, (pct) => {
+                    const scaledProgress = Math.round(40 + (pct * 0.6));
+                    setPlaylist(prev => prev.map(s => s.id === missingSong.id ? { ...s, locateStatus: 'decoding', locateProgress: scaledProgress } : s));
+                });
+
+                // Clear temporary progress properties from final cached song
+                const { locateProgress, locateStatus, ...finalSong } = updatedSong;
+                updateSongInPlaylist(missingSong.id, finalSong as Song);
             }
 
         } catch (error) {
             console.error(error);
         }
-    }, [playlist, prepareSongCache, updateSongInPlaylist]);
-
+    }, [playlist, setPlaylist, prepareSongCache, updateSongInPlaylist]);
     // Handle importing preset
     const handleImportPreset = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -317,6 +350,9 @@ export const SongList: React.FC = () => {
                             onClick={async () => {
                                 if (dragOccurredRef.current) return;
                                 if (song.isPlaceholder) {
+                                    if (song.locateStatus && song.locateStatus !== 'not_found') {
+                                        return;
+                                    }
                                     alert(`Sube el archivo ZIP de "${song.title}" (mismo nombre) para cargarlo.`);
                                     return;
                                 }
@@ -324,7 +360,14 @@ export const SongList: React.FC = () => {
                             }}
                             className={`
                                 px-2 py-2 flex items-center cursor-pointer transition-all text-sm group select-none
-                                ${song.isPlaceholder ? 'opacity-60 border-l-2 border-l-orange-500/50' : ''}
+                                ${song.isPlaceholder
+                                    ? (song.locateStatus === 'not_found'
+                                        ? 'opacity-70 border-l-2 border-l-red-500/50 bg-red-950/5'
+                                        : song.locateStatus
+                                            ? 'opacity-95 border-l-2 border-l-blue-500/50 bg-blue-950/10'
+                                            : 'opacity-60 border-l-2 border-l-orange-500/50')
+                                    : ''
+                                }
                                 ${activeSongId === song.id
                                     ? 'bg-green-900/30 border-l-2 border-l-green-500'
                                     : 'hover:bg-gray-800/80 border-l-2 border-l-transparent'
@@ -352,7 +395,29 @@ export const SongList: React.FC = () => {
                                 <div className="text-white text-xs font-semibold truncate">{song.title}</div>
                                 <div className="text-gray-500 text-[10px] truncate">
                                     {song.isPlaceholder ? (
-                                        <span className="text-orange-400">⚠️ Falta archivo ZIP</span>
+                                        song.locateStatus ? (
+                                            <div className="flex flex-col gap-1 mt-1">
+                                                <div className="flex items-center justify-between text-[10px] font-medium">
+                                                    {song.locateStatus === 'pending' && <span className="text-yellow-400">🔍 Buscando ZIP...</span>}
+                                                    {song.locateStatus === 'unzipping' && <span className="text-blue-400">📦 Extrayendo ZIP...</span>}
+                                                    {song.locateStatus === 'decoding' && <span className="text-purple-400 animate-pulse font-semibold">⚙️ Decodificando...</span>}
+                                                    {song.locateStatus === 'not_found' && <span className="text-red-400 font-medium">❌ ZIP no encontrado</span>}
+                                                    {song.locateProgress !== undefined && song.locateProgress > 0 && (
+                                                        <span className="text-green-400 font-bold ml-1">{song.locateProgress}%</span>
+                                                    )}
+                                                </div>
+                                                {song.locateProgress !== undefined && song.locateProgress > 0 && (
+                                                    <div className="w-full bg-gray-800 rounded-full h-1 overflow-hidden mt-0.5">
+                                                        <div 
+                                                            className="bg-gradient-to-r from-blue-500 to-green-500 h-full rounded-full transition-all duration-300"
+                                                            style={{ width: `${song.locateProgress}%` }}
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-orange-400">⚠️ Falta archivo ZIP</span>
+                                        )
                                     ) : (
                                         <>
                                             {song.cachedTracks ? song.cachedTracks.filter(t => !t.name.includes('VIDEO') && !t.isVideoAudio).length : song.stemFiles.length} stems
