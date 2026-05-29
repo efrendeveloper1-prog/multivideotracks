@@ -7,6 +7,7 @@ import { useAudioEngine, Song } from '@/hooks/useAudioEngine';
 export const SongList: React.FC = () => {
     const {
         playlist,
+        setPlaylist,
         activeSongId,
         addSongToPlaylist,
         removeSongFromPlaylist,
@@ -28,6 +29,7 @@ export const SongList: React.FC = () => {
     const videoInputRef = useRef<HTMLInputElement>(null);
     const presetInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = React.useState(false);
+    const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
 
 
     // Updated input handlers
@@ -47,18 +49,25 @@ export const SongList: React.FC = () => {
 
     // Drag and Drop handlers
     const handleDragOver = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(true);
-    }, []);
+        if (draggedIndex !== null) return;
+        const types = e.dataTransfer.types;
+        const isFileDrag = types && (types.includes ? types.includes('Files') : Array.from(types).includes('Files'));
+        if (isFileDrag) {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsDragging(true);
+        }
+    }, [draggedIndex]);
 
     const handleDragLeave = useCallback((e: React.DragEvent) => {
+        if (draggedIndex !== null) return;
         e.preventDefault();
         e.stopPropagation();
         setIsDragging(false);
-    }, []);
+    }, [draggedIndex]);
 
     const handleDrop = useCallback(async (e: React.DragEvent) => {
+        if (draggedIndex !== null) return;
         e.preventDefault();
         e.stopPropagation();
         setIsDragging(false);
@@ -74,7 +83,7 @@ export const SongList: React.FC = () => {
                 await processVideoFile(file);
             }
         }
-    }, [processZipFile, processVideoFile]);
+    }, [draggedIndex, processZipFile, processVideoFile]);
 
     const handleAutoLocate = useCallback(async () => {
         try {
@@ -150,6 +159,34 @@ export const SongList: React.FC = () => {
         await importPreset(file);
         event.target.value = '';
     }, [importPreset]);
+
+    // Playlist reordering drag-and-drop handlers
+    const dragOccurredRef = useRef(false);
+
+    const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+        dragOccurredRef.current = false;
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', index.toString());
+    }, []);
+
+    const handleDragOverItem = useCallback((e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        if (draggedIndex === null || draggedIndex === index) return;
+        dragOccurredRef.current = true;
+        
+        setPlaylist(prev => {
+            const next = [...prev];
+            const [draggedItem] = next.splice(draggedIndex, 1);
+            next.splice(index, 0, draggedItem);
+            return next;
+        });
+        setDraggedIndex(index);
+    }, [draggedIndex, setPlaylist]);
+
+    const handleDragEnd = useCallback(() => {
+        setDraggedIndex(null);
+    }, []);
 
 
     return (
@@ -273,7 +310,12 @@ export const SongList: React.FC = () => {
                     playlist.map((song, index) => (
                         <div
                             key={song.id}
+                            draggable={!isUploading}
+                            onDragStart={(e) => handleDragStart(e, index)}
+                            onDragOver={(e) => handleDragOverItem(e, index)}
+                            onDragEnd={handleDragEnd}
                             onClick={async () => {
+                                if (dragOccurredRef.current) return;
                                 if (song.isPlaceholder) {
                                     alert(`Sube el archivo ZIP de "${song.title}" (mismo nombre) para cargarlo.`);
                                     return;
@@ -281,15 +323,31 @@ export const SongList: React.FC = () => {
                                 await loadSong(song.id);
                             }}
                             className={`
-                                px-2 py-2 border-b border-gray-800 flex items-center cursor-pointer transition-all text-sm
+                                px-2 py-2 flex items-center cursor-pointer transition-all text-sm group select-none
                                 ${song.isPlaceholder ? 'opacity-60 border-l-2 border-l-orange-500/50' : ''}
                                 ${activeSongId === song.id
                                     ? 'bg-green-900/30 border-l-2 border-l-green-500'
                                     : 'hover:bg-gray-800/80 border-l-2 border-l-transparent'
                                 }
+                                ${draggedIndex === index
+                                    ? 'opacity-30 bg-green-500/10 border-y border-dashed border-green-500/60'
+                                    : 'border-b border-gray-800'
+                                }
                             `}
                         >
-                            <div className="w-5 text-[10px] font-bold text-gray-500 shrink-0">{index + 1}</div>
+                            <div className="w-5 text-[10px] font-bold text-gray-500 shrink-0 flex items-center justify-start">
+                                <span className="group-hover:hidden">{index + 1}</span>
+                                <span className="hidden group-hover:inline-block text-gray-400 cursor-grab active:cursor-grabbing">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+                                        <circle cx="9" cy="12" r="1" fill="currentColor" />
+                                        <circle cx="9" cy="5" r="1" fill="currentColor" />
+                                        <circle cx="9" cy="19" r="1" fill="currentColor" />
+                                        <circle cx="15" cy="12" r="1" fill="currentColor" />
+                                        <circle cx="15" cy="5" r="1" fill="currentColor" />
+                                        <circle cx="15" cy="19" r="1" fill="currentColor" />
+                                    </svg>
+                                </span>
+                            </div>
                             <div className="flex-1 min-w-0">
                                 <div className="text-white text-xs font-semibold truncate">{song.title}</div>
                                 <div className="text-gray-500 text-[10px] truncate">
