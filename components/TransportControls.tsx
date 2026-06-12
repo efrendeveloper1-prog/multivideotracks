@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
+import { ChordsPanel } from './ChordsPanel';
+import { transposeKey } from '@/utils/chordShapes';
+
 
 export const TransportControls: React.FC = () => {
     const [isEditingTempo, setIsEditingTempo] = useState(false);
     const [tempoInputValue, setTempoInputValue] = useState("");
+    const [showChords, setShowChords] = useState(false);
 
     const {
         isPlaying,
@@ -65,8 +69,31 @@ export const TransportControls: React.FC = () => {
     };
 
     const bpmDisplay = songAnalysis?.bpm || '--';
-    const keyDisplay = songAnalysis?.keyDisplay || '--';
+    
+    // Read user-corrected key if saved in localStorage, otherwise fall back to analyzed key
+    const [correctedKey, setCorrectedKey] = useState<string>('--');
+
+    useEffect(() => {
+        const defaultKey = songAnalysis?.keyDisplay || '--';
+        if (activeSongId) {
+            const saved = localStorage.getItem(`chords_sync_${activeSongId}`);
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.key) {
+                        setCorrectedKey(parsed.key);
+                        return;
+                    }
+                } catch (e) {}
+            }
+        }
+        setCorrectedKey(defaultKey);
+    }, [activeSongId, songAnalysis?.keyDisplay, showChords]);
+
+    const keyDisplay = correctedKey !== '--' ? transposeKey(correctedKey, pitchShift) : '--';
     const timeSigDisplay = songAnalysis?.timeSignature || '4/4';
+
+
 
     // Pitch Options Logic
     const SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -189,12 +216,44 @@ export const TransportControls: React.FC = () => {
                 </button>
             </div>
 
-            {/* Song Info / LCD Display */}
-            <div className="flex-1 mx-2 sm:mx-4 bg-gray-900 px-3 py-2 rounded border border-gray-600 font-mono text-green-400 flex flex-col items-end justify-center min-w-max shrink-0">
+            {/* Song Info / LCD Display — clickable to toggle chords */}
+            <div
+                className={`relative flex-1 mx-2 sm:mx-4 bg-gray-900 px-3 py-2 rounded border font-mono text-green-400 flex flex-col items-end justify-center min-w-max shrink-0 transition-all duration-200 ${
+                    songAnalysis
+                        ? 'border-emerald-700/60 cursor-pointer hover:border-emerald-500 hover:bg-gray-800/80 hover:shadow-[0_0_12px_rgba(16,185,129,0.25)]'
+                        : 'border-gray-600 cursor-default'
+                }`}
+                onClick={() => songAnalysis && setShowChords(prev => !prev)}
+                title={songAnalysis ? 'Clic para ver acordes' : ''}
+            >
                 <div className="text-base sm:text-xl md:text-2xl whitespace-nowrap">{fmt(currentTime)} / {fmt(duration)}</div>
-                <div className="text-[10px] sm:text-xs md:text-sm text-gray-400 whitespace-nowrap">
-                    {timeSigDisplay} • {bpmDisplay} BPM
+                <div className="flex items-center gap-2 text-[10px] sm:text-xs md:text-sm whitespace-nowrap">
+                    <span className="text-gray-400">{timeSigDisplay} • {bpmDisplay} BPM</span>
+                    {keyDisplay !== '--' && (
+                        <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] sm:text-[11px] transition-colors ${
+                            showChords
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-emerald-900/50 text-emerald-400 border border-emerald-700/50'
+                        }`}>
+                            ♪ {keyDisplay}
+                        </span>
+                    )}
                 </div>
+                {/* Chords hint badge */}
+                {songAnalysis && (
+                    <div className={`absolute -top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-full text-[7px] font-bold uppercase tracking-wide transition-all ${
+                        showChords
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-gray-700 text-gray-400 opacity-80'
+                    }`}>
+                        {showChords ? '▲ acordes' : '▼ acordes'}
+                    </div>
+                )}
+            </div>
+
+            {/* Chords Panel (absolute, grows upward from footer) */}
+            <div className="absolute bottom-full left-0 right-0 z-50">
+                <ChordsPanel isOpen={showChords} onClose={() => setShowChords(false)} />
             </div>
 
             {/* Key & Tempo Controls */}

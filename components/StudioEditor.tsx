@@ -11,6 +11,7 @@ import { WaveformDisplay } from './WaveformDisplay';
 import { VideoTimelineTrack } from './VideoTimelineTrack';
 import { LyricsEditor } from './LyricsEditor';
 import { LyricsTimelineTrack } from './LyricsTimelineTrack';
+import { ChordsTimelineTrack } from './ChordsTimelineTrack';
 import { Group, Panel, Separator, PanelImperativeHandle } from 'react-resizable-panels';
 import { LyricsRenderer } from './LyricsRenderer';
 import { AudioSettingsModal } from './AudioSettingsModal';
@@ -47,8 +48,66 @@ const EditorContent: React.FC = () => {
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         sections, setSections,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
-        invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, isRecording
+        invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, isRecording,
+        customChords, playlist
     } = useAudioEngine();
+
+    // Navigation guard to protect loaded tracks and playlist
+    const guardedRef = useRef(false);
+
+    useEffect(() => {
+        const hasContent = tracks.length > 0 || playlist.length > 0;
+
+        // 1. Intercept browser reload, F5, or closing the tab
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (hasContent) {
+                e.preventDefault();
+                e.returnValue = '¿Realmente desea salir de multivideotracks?';
+                return e.returnValue;
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        // 2. Intercept browser back/forward buttons
+        let handlePopState: ((event: PopStateEvent) => void) | null = null;
+
+        if (hasContent) {
+            if (!guardedRef.current) {
+                guardedRef.current = true;
+                window.history.pushState({ protected: true }, '', window.location.href);
+            }
+
+            handlePopState = (event: PopStateEvent) => {
+                const confirmLeave = window.confirm("¿Realmente desea salir de multivideotracks? Se perderán todos los datos cargados.");
+                if (confirmLeave) {
+                    if (handlePopState) {
+                        window.removeEventListener('popstate', handlePopState);
+                    }
+                    guardedRef.current = false;
+                    window.history.back();
+                } else {
+                    window.history.pushState({ protected: true }, '', window.location.href);
+                }
+            };
+
+            window.addEventListener('popstate', handlePopState);
+        } else {
+            if (guardedRef.current) {
+                guardedRef.current = false;
+                if (window.history.state?.protected) {
+                    window.history.back();
+                }
+            }
+        }
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            if (handlePopState) {
+                window.removeEventListener('popstate', handlePopState);
+            }
+        };
+    }, [tracks, playlist]);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
     const [isDraggingOffset, setIsDraggingOffset] = useState(false);
@@ -69,6 +128,7 @@ const EditorContent: React.FC = () => {
     const [zoomLevel, setZoomLevel] = useState(1);
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showAudioSettings, setShowAudioSettings] = useState(false);
+    const [showChordsTrack, setShowChordsTrack] = useState(true);
 
     // Panel Refs for toggling
     const sidebarPanelRef = useRef<PanelImperativeHandle>(null);
@@ -113,9 +173,10 @@ const EditorContent: React.FC = () => {
     const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
 
     const hasLyrics = lyrics.length > 0;
+    const hasChords = duration > 0 && showChordsTrack;
     const videoTrackInfo = tracks.find(t => t.name === "VIDEO TRACK");
     const hasVideoTrack = !!videoTrackInfo;
-    const tlPanelsCount = (hasLyrics ? 1 : 0) + (hasVideoTrack ? 1 : 0) + 1 + (isRecording ? 1 : 0);
+    const tlPanelsCount = (hasLyrics ? 1 : 0) + (hasChords ? 1 : 0) + (hasVideoTrack ? 1 : 0) + 1 + (isRecording ? 1 : 0);
     
     const safeTlSizes = panelSizes.timeline;
 
@@ -521,6 +582,13 @@ const EditorContent: React.FC = () => {
                         LYRICS
                     </button>
                     <button 
+                        onClick={() => setShowChordsTrack(!showChordsTrack)}
+                        className={`${showChordsTrack ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors`}
+                        title={showChordsTrack ? "Ocultar pista de acordes" : "Mostrar pista de acordes"}
+                    >
+                        ACORDES
+                    </button>
+                    <button 
                         onClick={() => setShowAudioSettings(true)}
                         className={`${showAudioSettings ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors flex items-center gap-1`}
                         title="Configuración de Audio"
@@ -670,6 +738,16 @@ const EditorContent: React.FC = () => {
                                 <>
                                     <Panel id="tl-lyrics" minSize={10} className="relative flex flex-col shrink-0 min-h-[40px]">
                                         <LyricsTimelineTrack />
+                                    </Panel>
+                                    <DividerHandle orientation="vertical" />
+                                </>
+                            )}
+
+                            {/* Chords Panel */}
+                            {hasChords && (
+                                <>
+                                    <Panel id="tl-chords" minSize={10} className="relative flex flex-col shrink-0 min-h-[40px]">
+                                        <ChordsTimelineTrack />
                                     </Panel>
                                     <DividerHandle orientation="vertical" />
                                 </>
@@ -1111,7 +1189,7 @@ const EditorContent: React.FC = () => {
             </div>
 
             {/* Footer: Transport Controls */}
-            <div className="h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
+            <div className="relative h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
                 <TransportControls />
             </div>
 
