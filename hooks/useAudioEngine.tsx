@@ -40,6 +40,23 @@ interface AudioEngineContextType {
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
 export const useAudioEngine = () => { const context = useContext(AudioEngineContext); if (!context) throw new Error('useAudioEngine must be used within AudioEngineProvider'); return context; };
 
+const getTrackColor = (name: string) => {
+    const n = name.toLowerCase();
+    if (n.includes('drum') || n.includes('bateria')) return '#06b6d4';
+    if (n.includes('bass') || n.includes('bajo')) return '#0d9488';
+    if (n.includes('vox') || n.includes('voz') || n.includes('vocal')) return '#2563eb';
+    if (n.includes('click') || n.includes('guia') || n.includes('cue') || n.includes('guide')) return '#dc2626';
+    if (n.includes('key') || n.includes('piano') || n.includes('synth')) return '#d946ef';
+    if (n.includes('guitar') || n.includes('guit')) return '#f59e0b';
+    if (n.includes('video')) return '#a855f7';
+    return '#94a3b8';
+};
+
+const sortTracks = (list: Track[]) => [...list].sort((a,b) => {
+    const isG = (n: string) => n.toLowerCase().match(/click|guia|cue|guide/);
+    return (isG(a.name) ? -1 : 0) - (isG(b.name) ? -1 : 0);
+});
+
 export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [tracks, setTracks] = useState<Track[]>([]);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -203,23 +220,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
     }, [tracks]);
 
-
-    const getTrackColor = (name: string) => {
-        const n = name.toLowerCase();
-        if (n.includes('drum') || n.includes('bateria')) return '#06b6d4';
-        if (n.includes('bass') || n.includes('bajo')) return '#0d9488';
-        if (n.includes('vox') || n.includes('voz') || n.includes('vocal')) return '#2563eb';
-        if (n.includes('click') || n.includes('guia') || n.includes('cue') || n.includes('guide')) return '#dc2626';
-        if (n.includes('key') || n.includes('piano') || n.includes('synth')) return '#d946ef';
-        if (n.includes('guitar') || n.includes('guit')) return '#f59e0b';
-        if (n.includes('video')) return '#a855f7';
-        return '#94a3b8';
-    };
-
-    const sortTracks = (list: Track[]) => [...list].sort((a,b) => {
-        const isG = (n: string) => n.toLowerCase().match(/click|guia|cue|guide/);
-        return (isG(a.name) ? -1 : 0) - (isG(b.name) ? -1 : 0);
-    });
 
     const addTrack = useCallback(async (file: File, name: string) => {
         if (!audioContextRef.current) return;
@@ -509,12 +509,49 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }, []);
 
     const loadSong = async (id: string) => {
+        if (id === activeSongIdRef.current) return;
         updateActiveSongCache();
         const s = playlist.find(x => x.id === id); if (!s) return;
-        stop(); setTracks(s.cachedTracks || []); setDuration(s.cachedDuration || 0); setVideoDuration(s.cachedVideoDuration || 0); setVideoOffset(s.cachedVideoOffset || 0); setVideoEndTime(s.cachedVideoEndTime || s.cachedVideoDuration || 0); setVideoFadeIn(s.cachedVideoFadeIn || 0); setVideoFadeOut(s.cachedVideoFadeOut || 0); setCutRegions(s.cachedCutRegions || []); setSplitPoints(s.cachedSplitPoints || []); setSections(s.cachedSections || []); setLyrics(s.cachedLyrics || []); if (s.cachedLyricsSettings) setLyricsSettings(s.cachedLyricsSettings); setSongAnalysis(s.analysis || null); setActiveSongId(id); setCustomChords(s.cachedChords || []);
+        stop();
+        
+        let songToLoad = s;
+        const hasBuffers = s.cachedTracks && s.cachedTracks.length > 0 && s.cachedTracks.every(t => t.name === "VIDEO TRACK" || t.buffer !== undefined);
+        if (!hasBuffers && s.stemFiles && s.stemFiles.length > 0) {
+            setIsUploading(true);
+            setUploadMessage(`Cargando y decodificando ${s.title}...`);
+            try {
+                songToLoad = await prepareSongCache(s, s, (pct) => {
+                    setLoadingProgress(pct);
+                });
+            } catch (e) {
+                console.error("Error loading song:", e);
+                alert("Error al cargar la canción.");
+                setIsUploading(false);
+                setLoadingProgress(null);
+                return;
+            }
+            setIsUploading(false);
+            setLoadingProgress(null);
+        }
+        
+        setTracks(songToLoad.cachedTracks || []);
+        setDuration(songToLoad.cachedDuration || 0);
+        setVideoDuration(songToLoad.cachedVideoDuration || 0);
+        setVideoOffset(songToLoad.cachedVideoOffset || 0);
+        setVideoEndTime(songToLoad.cachedVideoEndTime || songToLoad.cachedVideoDuration || 0);
+        setVideoFadeIn(songToLoad.cachedVideoFadeIn || 0);
+        setVideoFadeOut(songToLoad.cachedVideoFadeOut || 0);
+        setCutRegions(songToLoad.cachedCutRegions || []);
+        setSplitPoints(songToLoad.cachedSplitPoints || []);
+        setSections(songToLoad.cachedSections || []);
+        setLyrics(songToLoad.cachedLyrics || []);
+        if (songToLoad.cachedLyricsSettings) setLyricsSettings(songToLoad.cachedLyricsSettings);
+        setSongAnalysis(songToLoad.analysis || null);
+        setActiveSongId(id);
+        setCustomChords(songToLoad.cachedChords || []);
     };
 
-    const prepareSongCache = async (s: Song, placeholder?: Song, onProgress?: (progress: number, message?: string) => void): Promise<Song> => {
+    const prepareSongCache = useCallback(async (s: Song, placeholder?: Song, onProgress?: (progress: number, message?: string) => void): Promise<Song> => {
         if (!audioContextRef.current) return s;
         const nt: Track[] = []; let nd = 0; setLoadingProgress(0);
         for (const f of s.stemFiles) {
@@ -538,6 +575,37 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const currentProgress = Math.round((nt.length / (s.stemFiles.length + (s.videoFile ? 1 : 0))) * 100);
             setLoadingProgress(currentProgress);
             if (onProgress) onProgress(currentProgress, 'Decodificando audios...');
+        }
+
+        if (s.videoFile) {
+            if (onProgress) onProgress(90, 'Decodificando audio del video...');
+            let vidVol = 1; let vidMute = true; let vidSolo = false;
+            let audVol = 1; let audMute = true; let audSolo = false;
+            let outCh: number | undefined;
+            
+            if (placeholder && placeholder.cachedTracks) {
+                const vt = placeholder.cachedTracks.find(t => t.name === "VIDEO TRACK");
+                if (vt) {
+                    vidVol = vt.volume; vidMute = vt.muted; vidSolo = vt.soloed;
+                }
+                const at = placeholder.cachedTracks.find(t => t.isVideoAudio);
+                if (at) {
+                    audVol = at.volume; audMute = at.muted; audSolo = at.soloed; outCh = at.outputChannel;
+                }
+            }
+            
+            const videoTrack: Track = { id: crypto.randomUUID(), name: "VIDEO TRACK", file: s.videoFile, buffer: undefined, volume: vidVol, pan: 1, muted: vidMute, soloed: vidSolo, color: '#a855f7' };
+            const audioTrack: Track = { id: crypto.randomUUID(), name: "VIDEO AUDIO", file: s.videoFile, buffer: undefined, volume: audVol, pan: 1, muted: audMute, soloed: audSolo, outputChannel: outCh, color: '#c084fc', isVideoAudio: true };
+            
+            try {
+                const buf = await audioContextRef.current.decodeAudioData(await s.videoFile.arrayBuffer());
+                audioTrack.buffer = buf;
+                nd = Math.max(nd, buf.duration);
+            } catch (err) {
+                console.error("Error decoding video audio in prepareSongCache:", err);
+            }
+            nt.push(videoTrack, audioTrack);
+            if (onProgress) onProgress(100, 'Decodificación completa');
         }
 
         let analysis = placeholder?.analysis || s.analysis || undefined;
@@ -606,11 +674,67 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             isPlaceholder: false, 
             analysis: analysis || null 
         };
-    };
+    }, []);
 
     const addSongToPlaylist = (s: Song) => setPlaylist(prev => [...prev, s]);
     const removeSongFromPlaylist = (id: string) => setPlaylist(prev => prev.filter(x => x.id !== id));
     const updateSongInPlaylist = (id: string, s: Song) => setPlaylist(prev => prev.map(x => x.id === id ? s : x));
+
+    // Background preloading and cache cleanup effect
+    useEffect(() => {
+        if (!activeSongId) return;
+        const idx = playlist.findIndex(s => s.id === activeSongId);
+        if (idx === -1) return;
+
+        const minIdx = Math.max(0, idx - 2);
+        const maxIdx = Math.min(playlist.length - 1, idx + 2);
+
+        // 1. Identify songs that are outside the window and have buffers that need to be stripped
+        let playlistNeedsUpdate = false;
+        const updatedPlaylist = playlist.map((song, i) => {
+            const inWindow = i >= minIdx && i <= maxIdx;
+            const hasBuffers = song.cachedTracks && song.cachedTracks.length > 0 && song.cachedTracks.every(t => t.name === "VIDEO TRACK" || t.buffer !== undefined);
+            
+            if (!inWindow && hasBuffers) {
+                playlistNeedsUpdate = true;
+                return {
+                    ...song,
+                    cachedTracks: song.cachedTracks?.map(t => ({ ...t, buffer: undefined }))
+                };
+            }
+            return song;
+        });
+
+        if (playlistNeedsUpdate) {
+            setPlaylist(updatedPlaylist);
+            return;
+        }
+
+        // 2. Identify songs inside the window that need preloading
+        const songsToPreload = playlist.slice(minIdx, maxIdx + 1).filter(song => {
+            if (song.id === activeSongId) return false; // Already active, no need to preload
+            if (song.isPlaceholder) return false; // Placeholder, cannot preload
+            if (!song.stemFiles || song.stemFiles.length === 0) return false; // No files
+            
+            const hasBuffers = song.cachedTracks && song.cachedTracks.length > 0 && song.cachedTracks.every(t => t.name === "VIDEO TRACK" || t.buffer !== undefined);
+            return !hasBuffers;
+        });
+
+        if (songsToPreload.length > 0) {
+            const targetSong = songsToPreload[0];
+            const doPreload = async () => {
+                if (!audioContextRef.current) return;
+                try {
+                    const decodedSong = await prepareSongCache(targetSong, targetSong);
+                    setPlaylist(prev => prev.map(s => s.id === targetSong.id ? decodedSong : s));
+                } catch (e) {
+                    console.error("Error preloading song:", e);
+                }
+            };
+            doPreload();
+        }
+    }, [activeSongId, playlist, prepareSongCache]);
+
     const loadPreparedSong = (s: Song) => { 
         updateActiveSongCache();
         stop(); 

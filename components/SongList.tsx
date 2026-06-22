@@ -219,6 +219,9 @@ export const SongList: React.FC = () => {
 
     const handleDragEnd = useCallback(() => {
         setDraggedIndex(null);
+        setTimeout(() => {
+            dragOccurredRef.current = false;
+        }, 100);
     }, []);
 
 
