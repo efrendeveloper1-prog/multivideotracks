@@ -16,6 +16,7 @@ import { Group, Panel, Separator, PanelImperativeHandle } from 'react-resizable-
 import { LyricsRenderer } from './LyricsRenderer';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { RealTimeRecordingWaveform } from './RealTimeRecordingWaveform';
+import { transposeKey } from '@/utils/chordShapes';
 
 const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDoubleClick?: () => void }> = ({ orientation, onDoubleClick }) => {
     return (
@@ -49,7 +50,9 @@ const EditorContent: React.FC = () => {
         sections, setSections,
         addCutRegion, removeCutRegion, revertVideo, isInCutRegion,
         invertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, isRecording,
-        customChords, playlist
+        customChords, playlist, activeSongId,
+        songAnalysis, pitchShift, setPitchShift, playbackRate, setPlaybackRate,
+        isCountInEnabled, setIsCountInEnabled, countInClicks, setCountInClicks, isCountingIn, currentCountInBeat
     } = useAudioEngine();
 
     // Navigation guard to protect loaded tracks and playlist
@@ -129,6 +132,76 @@ const EditorContent: React.FC = () => {
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showAudioSettings, setShowAudioSettings] = useState(false);
     const [showChordsTrack, setShowChordsTrack] = useState(true);
+
+    const [correctedKey, setCorrectedKey] = useState<string>('--');
+
+    useEffect(() => {
+        const defaultKey = songAnalysis?.keyDisplay || '--';
+        if (activeSongId) {
+            const saved = localStorage.getItem(`chords_sync_${activeSongId}`);
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.key) {
+                        setCorrectedKey(parsed.key);
+                        return;
+                    }
+                } catch (e) {}
+            }
+        }
+        setCorrectedKey(defaultKey);
+    }, [activeSongId, songAnalysis?.keyDisplay]);
+
+    const keyDisplay = correctedKey !== '--' ? transposeKey(correctedKey, pitchShift) : '--';
+
+    // Pitch Options Logic
+    const SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const FLATS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+    
+    const getPitchOptions = () => {
+        if (!songAnalysis?.keyDisplay) return [{ label: 'Normal (0)', value: 0 }];
+        let root = songAnalysis.keyDisplay.split(' ')[0];
+        if (root.length > 1 && root[1].toLowerCase() === 'm') root = root[0]; 
+        
+        let idx = SHARPS.indexOf(root);
+        if (idx === -1) idx = FLATS.indexOf(root);
+        if (idx === -1) return [{ label: `${root} (0)`, value: 0 }];
+        
+        const options = [];
+        for (let i = -8; i < 0; i++) {
+            let noteIdx = (idx + i) % 12;
+            if (noteIdx < 0) noteIdx += 12;
+            options.push({ label: `${FLATS[noteIdx]} (${i})`, value: i });
+        }
+        options.push({ label: `${root} (0)`, value: 0 });
+        for (let i = 1; i <= 8; i++) {
+            let noteIdx = (idx + i) % 12;
+            options.push({ label: `${SHARPS[noteIdx]} (+${i})`, value: i });
+        }
+        return options;
+    };
+
+    const [activeHeaderPopover, setActiveHeaderPopover] = useState<'bpm' | 'key' | 'countin' | null>(null);
+    const headerBpmRef = useRef<HTMLDivElement>(null);
+    const headerKeyRef = useRef<HTMLDivElement>(null);
+    const headerCountInRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            const target = e.target as Node;
+            if (activeHeaderPopover === 'bpm' && headerBpmRef.current && !headerBpmRef.current.contains(target)) {
+                setActiveHeaderPopover(null);
+            }
+            if (activeHeaderPopover === 'key' && headerKeyRef.current && !headerKeyRef.current.contains(target)) {
+                setActiveHeaderPopover(null);
+            }
+            if (activeHeaderPopover === 'countin' && headerCountInRef.current && !headerCountInRef.current.contains(target)) {
+                setActiveHeaderPopover(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeHeaderPopover]);
 
     // Panel Refs for toggling
     const sidebarPanelRef = useRef<PanelImperativeHandle>(null);
@@ -571,7 +644,7 @@ const EditorContent: React.FC = () => {
     return (
         <div className="flex flex-col h-screen h-[100dvh] bg-black text-white overflow-hidden font-sans">
             {/* Header */}
-            <div className="h-10 sm:h-12 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-2 sm:px-4 shrink-0">
+            <div className="h-10 sm:h-12 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-2 sm:px-4 shrink-0 relative z-[60]">
                 <div className="flex items-center gap-1 sm:gap-3">
                     <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">SETLIST</button>
                     <button className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-[10px] sm:text-xs font-bold text-gray-300">MIDI</button>
@@ -600,8 +673,184 @@ const EditorContent: React.FC = () => {
                     </button>
                 </div>
 
-                <div className="bg-gray-800 px-3 py-0.5 rounded text-green-500 font-mono font-bold text-xs sm:text-sm">
-                    {fmt(currentTime)} / {fmt(duration)}
+                {/* Header Center Controls: BPM, Key, Count-In, and Timer */}
+                <div className="flex items-center gap-2 sm:gap-4">
+                    {/* BPM Selector */}
+                    <div ref={headerBpmRef} className="relative">
+                        <button
+                            disabled={!songAnalysis}
+                            onClick={() => setActiveHeaderPopover(activeHeaderPopover === 'bpm' ? null : 'bpm')}
+                            className={`h-7 sm:h-8 px-2 sm:px-3 bg-zinc-800 hover:bg-zinc-700 text-white font-mono rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-semibold select-none border border-zinc-700/50 shadow transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 disabled:cursor-not-allowed`}
+                            title="Ajustar Tempo (BPM)"
+                        >
+                            {/* Metronome Icon */}
+                            <svg className="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 2L2 22h20L12 2z" />
+                                <path d="M12 5l4 14H8z" />
+                                <path d="M12 11v6" />
+                            </svg>
+                            <span>{songAnalysis ? Math.round((songAnalysis.bpm || 120) * playbackRate) : '--'}</span>
+                            {/* Chevron */}
+                            <svg className="w-3 h-3 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                        </button>
+
+                        {activeHeaderPopover === 'bpm' && songAnalysis && (
+                            <div className="absolute top-full left-0 mt-1.5 bg-[#18181b] border border-zinc-800 rounded-xl p-3 shadow-2xl w-48 z-[70] flex flex-col gap-2">
+                                <div className="flex justify-between items-center text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                    <span>Tempo</span>
+                                    <button 
+                                        onClick={() => setPlaybackRate(1)}
+                                        className="text-emerald-400 hover:text-emerald-300 text-[9px] font-extrabold"
+                                    >
+                                        RESET
+                                    </button>
+                                </div>
+                                <div className="text-lg font-bold font-mono text-center text-white my-1">
+                                    {Math.round(songAnalysis.bpm * playbackRate)} <span className="text-[10px] text-gray-400 font-normal">BPM</span>
+                                </div>
+                                <input 
+                                    type="range" 
+                                    min={Math.round(songAnalysis.bpm * 0.5)} 
+                                    max={Math.round(songAnalysis.bpm * 1.5)} 
+                                    step="1" 
+                                    value={Math.round(songAnalysis.bpm * playbackRate)} 
+                                    onChange={(e) => {
+                                        if (songAnalysis?.bpm) {
+                                            setPlaybackRate(Number(e.target.value) / songAnalysis.bpm);
+                                        }
+                                    }}
+                                    className="w-full cursor-pointer h-1.5 bg-zinc-700 rounded-lg appearance-none accent-emerald-500"
+                                />
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Key Selector */}
+                    <div ref={headerKeyRef} className="relative">
+                        <button
+                            disabled={!songAnalysis}
+                            onClick={() => setActiveHeaderPopover(activeHeaderPopover === 'key' ? null : 'key')}
+                            className={`h-7 sm:h-8 px-2 sm:px-3 bg-zinc-800 hover:bg-zinc-700 text-white font-mono rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-semibold select-none border border-zinc-700/50 shadow transition-colors disabled:opacity-40 disabled:hover:bg-zinc-800 disabled:cursor-not-allowed`}
+                            title="Ajustar Tono (Key)"
+                        >
+                            {/* Note Icon */}
+                            <svg className="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M9 18V5l12-2v13" />
+                                <circle cx="6" cy="18" r="3" />
+                                <circle cx="18" cy="16" r="3" />
+                            </svg>
+                            <span>{keyDisplay}</span>
+                            {/* Chevron */}
+                            <svg className="w-3 h-3 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                        </button>
+
+                        {activeHeaderPopover === 'key' && songAnalysis && (
+                            <div className="absolute top-full left-0 mt-1.5 bg-[#18181b] border border-zinc-800 rounded-xl p-1 shadow-2xl w-40 max-h-60 overflow-y-auto z-[70] flex flex-col custom-scrollbar">
+                                <div className="px-2.5 py-1 text-[9px] text-gray-400 font-bold uppercase tracking-wider border-b border-zinc-800/60 mb-1 flex justify-between items-center">
+                                    <span>Tono</span>
+                                    <button 
+                                        onClick={() => setPitchShift(0)}
+                                        className="text-emerald-400 hover:text-emerald-300 text-[8px] font-extrabold"
+                                    >
+                                        RESET
+                                    </button>
+                                </div>
+                                {getPitchOptions().map((opt) => (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => {
+                                            setPitchShift(opt.value);
+                                            setActiveHeaderPopover(null);
+                                        }}
+                                        className={`w-full text-left px-2.5 py-1.5 hover:bg-zinc-800 text-[11px] rounded transition-colors flex justify-between items-center ${
+                                            pitchShift === opt.value 
+                                                ? 'bg-emerald-950/40 text-emerald-400 font-bold border border-emerald-900/30' 
+                                                : 'text-gray-300'
+                                        }`}
+                                    >
+                                        <span>{opt.label.split(' (')[0]}</span>
+                                        <span className="text-[9px] text-gray-500 font-mono">
+                                            {opt.value > 0 ? `+${opt.value}` : opt.value === 0 ? '0' : opt.value}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Count-In Settings (Cuenta Inicial) */}
+                    <div ref={headerCountInRef} className="relative">
+                        <button
+                            onClick={() => setActiveHeaderPopover(activeHeaderPopover === 'countin' ? null : 'countin')}
+                            className={`h-7 sm:h-8 px-2 sm:px-3 bg-zinc-800 hover:bg-zinc-700 text-white font-mono rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-semibold select-none border border-zinc-700/50 shadow transition-colors`}
+                            title="Configuración de Cuenta Inicial"
+                        >
+                            {/* Grid numbers icon 12 / 34 */}
+                            <div className="flex flex-col text-[8px] leading-[1.1] font-extrabold mr-0.5 text-zinc-400">
+                                <div className="flex gap-0.5"><span>1</span><span>2</span></div>
+                                <div className="flex gap-0.5"><span>3</span><span>4</span></div>
+                            </div>
+                            <span className="text-xs sm:text-sm font-medium">{isCountInEnabled ? `${countInClicks} C` : 'OFF'}</span>
+                            {/* Chevron */}
+                            <svg className={`w-3 h-3 text-zinc-500 transition-transform duration-200 ${
+                                activeHeaderPopover === 'countin' ? 'rotate-180' : ''
+                            }`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                        </button>
+
+                        {activeHeaderPopover === 'countin' && (
+                            <div className="absolute top-full right-0 sm:left-0 mt-1.5 bg-[#18181b] border border-zinc-800 rounded-2xl p-4 shadow-2xl w-72 z-[70] flex flex-col gap-4 text-white">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm font-semibold text-gray-200">Cuenta inicial</span>
+                                    <button
+                                        onClick={() => setIsCountInEnabled(!isCountInEnabled)}
+                                        className={`w-11 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors duration-200 ${
+                                            isCountInEnabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                                        }`}
+                                    >
+                                        <div
+                                            className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${
+                                                isCountInEnabled ? 'translate-x-5' : 'translate-x-0'
+                                            }`}
+                                        />
+                                    </button>
+                                </div>
+                                
+                                <div className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] text-gray-400 font-medium">Clicks antes de iniciar la reproducción</span>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            disabled={countInClicks <= 1}
+                                            onClick={() => setCountInClicks(Math.max(1, countInClicks - 1))}
+                                            className="w-12 h-12 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-900 rounded-xl flex items-center justify-center text-xl font-semibold text-gray-200 border border-zinc-700/20 disabled:opacity-40 disabled:cursor-not-allowed select-none transition-colors"
+                                        >
+                                            —
+                                        </button>
+                                        <div className="flex-1 h-12 bg-zinc-800/80 rounded-xl flex items-center justify-center text-xl font-bold font-mono text-white border border-zinc-700/20 shadow-inner">
+                                            {countInClicks}
+                                        </div>
+                                        <button
+                                            disabled={countInClicks >= 16}
+                                            onClick={() => setCountInClicks(Math.min(16, countInClicks + 1))}
+                                            className="w-12 h-12 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-900 rounded-xl flex items-center justify-center text-xl font-semibold text-gray-200 border border-zinc-700/20 disabled:opacity-40 disabled:cursor-not-allowed select-none transition-colors"
+                                        >
+                                            +
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Timer LCD display */}
+                    <div className="bg-gray-800 px-3 py-0.5 rounded text-green-500 font-mono font-bold text-xs sm:text-sm border border-gray-700/50">
+                        {fmt(currentTime)} / {fmt(duration)}
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-1 sm:gap-2">
@@ -1267,6 +1516,20 @@ const EditorContent: React.FC = () => {
             
             {showAudioSettings && (
                 <AudioSettingsModal onClose={() => setShowAudioSettings(false)} />
+            )}
+
+            {/* Visual Count-In Countdown Overlay */}
+            {isCountingIn && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-[2px] pointer-events-none">
+                    <div key={currentCountInBeat} className="flex flex-col items-center animate-scale-in">
+                        <span className="text-[12rem] font-black text-emerald-400 font-mono leading-none drop-shadow-[0_0_50px_rgba(52,211,153,0.6)]">
+                            {currentCountInBeat}
+                        </span>
+                        <span className="text-sm uppercase tracking-[0.4em] text-emerald-300/80 font-extrabold mt-4 bg-emerald-950/60 px-4 py-1.5 rounded-full border border-emerald-500/20 backdrop-blur">
+                            Preparando Entrada
+                        </span>
+                    </div>
+                </div>
             )}
         </div>
     );

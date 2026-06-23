@@ -35,6 +35,9 @@ interface AudioEngineContextType {
     audioOutputDeviceId: string; audioOutputMaxChannels: number; setAudioOutputDevice: (id: string) => Promise<void>; setTrackOutputChannel: (id: string, channel: number) => void;
     isRecording: boolean; startRecording: () => void; stopRecording: () => void; downloadTrack: (id: string) => void;
     getRecordingTimeDomainData: (dataArray: Float32Array) => void;
+    isCountInEnabled: boolean; setIsCountInEnabled: (val: boolean) => void;
+    countInClicks: number; setCountInClicks: (val: number) => void;
+    isCountingIn: boolean; currentCountInBeat: number;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -90,6 +93,39 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [audioOutputDeviceId, setAudioOutputDeviceId] = useState<string>('default');
     const [audioOutputMaxChannels, setAudioOutputMaxChannels] = useState<number>(2);
     const [isRecording, setIsRecording] = useState<boolean>(false);
+
+    const [isCountInEnabled, setIsCountInEnabled] = useState<boolean>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('multitrack_count_in_enabled');
+            return saved === 'true';
+        }
+        return false;
+    });
+    const [countInClicks, setCountInClicks] = useState<number>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('multitrack_count_in_clicks');
+            return saved ? parseInt(saved) : 4;
+        }
+        return 4;
+    });
+    const [isCountingIn, setIsCountingIn] = useState<boolean>(false);
+    const [currentCountInBeat, setCurrentCountInBeat] = useState<number>(0);
+
+    const isCountInEnabledRef = useRef<boolean>(isCountInEnabled);
+    const countInClicksRef = useRef<number>(countInClicks);
+
+    useEffect(() => {
+        isCountInEnabledRef.current = isCountInEnabled;
+        localStorage.setItem('multitrack_count_in_enabled', String(isCountInEnabled));
+    }, [isCountInEnabled]);
+
+    useEffect(() => {
+        countInClicksRef.current = countInClicks;
+        localStorage.setItem('multitrack_count_in_clicks', String(countInClicks));
+    }, [countInClicks]);
+
+    const scheduledClicksRef = useRef<OscillatorNode[]>([]);
+    const countInTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const recordingAnalyserRef = useRef<AnalyserNode | null>(null);
     const recordedChunksRef = useRef<Blob[]>([]);
@@ -245,9 +281,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         sourceNodesRef.current.forEach(s => { try { s.stop(); } catch {} }); sourceNodesRef.current.clear(); gainNodesRef.current.clear(); pannerNodesRef.current.clear(); trackAnalysersRef.current.clear();
         soundTouchNodesRef.current.forEach(st => { try { st.disconnect(); } catch {} }); soundTouchNodesRef.current.clear();
         isInCutRegionRef.current = false; setIsInCutRegion(false); setVideoOpacity(1);
+        
+        // Stop scheduled click oscillators and visual update timeouts
+        scheduledClicksRef.current.forEach(osc => { try { osc.stop(); } catch(e) {} });
+        scheduledClicksRef.current = [];
+        countInTimeoutsRef.current.forEach(clearTimeout);
+        countInTimeoutsRef.current = [];
     };
 
-    const playAudio = useCallback((start: number) => {
+    const playAudio = useCallback((start: number, startDelay: number = 0) => {
         if (!audioContextRef.current || !masterGainRef.current) return;
         if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
         const solo = tracksRef.current.some(t => t.soloed);
@@ -308,21 +350,147 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             p.connect(bus);
             
             s.playbackRate.value = playbackRateRef.current;
-            let w = 0, o = start; if (t.isVideoAudio) { const sum = start + videoOffsetRef.current; if (sum >= 0) o = sum; else { w = audioContextRef.current!.currentTime + Math.abs(sum) / playbackRateRef.current; o = 0; } }
-            try { s.start(w, o); } catch {} sourceNodesRef.current.set(t.id, s); gainNodesRef.current.set(t.id, g); pannerNodesRef.current.set(t.id, p); trackAnalysersRef.current.set(t.id, a);
+            
+            // Adjust start time for count-in delay
+            let w = audioContextRef.current!.currentTime + startDelay;
+            let o = start;
+            if (t.isVideoAudio) {
+                const sum = start + videoOffsetRef.current;
+                if (sum >= 0) {
+                    o = sum;
+                } else {
+                    w = audioContextRef.current!.currentTime + startDelay + Math.abs(sum) / playbackRateRef.current;
+                    o = 0;
+                }
+            }
+            
+            try { s.start(w, o); } catch {}
+            sourceNodesRef.current.set(t.id, s);
+            gainNodesRef.current.set(t.id, g);
+            pannerNodesRef.current.set(t.id, p);
+            trackAnalysersRef.current.set(t.id, a);
         });
     }, [pitchShift]);
 
+    const stop = useCallback(() => { 
+        stopAudioInternal(); 
+        videoRef.current?.pause(); 
+        if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoOffsetRef.current); 
+        pauseTimeRef.current = 0; 
+        setCurrentTime(0); 
+        setIsPlaying(false); 
+        setIsCountingIn(false);
+        setCurrentCountInBeat(0);
+        cancelAnimationFrame(animationFrameRef.current!); 
+        loopStatusRef.current = null; 
+        lastLoopTriggerTimeRef.current = 0; 
+    }, []);
+
+    const seek = useCallback((t: number) => { 
+        const was = isPlayingRef.current; 
+        if (was) stopAudioInternal(); 
+        pauseTimeRef.current = t; 
+        setCurrentTime(t); 
+        lastLoopTriggerTimeRef.current = 0; 
+        if (videoRef.current) videoRef.current.currentTime = Math.max(0, t + videoOffsetRef.current); 
+        if (was) { 
+            playAudio(t, 0); 
+            startTimeRef.current = audioContextRef.current!.currentTime - (t / playbackRateRef.current); 
+            if (videoRef.current && (t + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); 
+        } 
+    }, [playAudio]);
+
     const togglePlay = useCallback(() => {
-        if (isPlayingRef.current) { stopAudioInternal(); pauseTimeRef.current = currentTime; videoRef.current?.pause(); cancelAnimationFrame(animationFrameRef.current!); setIsPlaying(false); }
+        if (isPlayingRef.current) { 
+            stopAudioInternal(); 
+            pauseTimeRef.current = currentTime; 
+            videoRef.current?.pause(); 
+            cancelAnimationFrame(animationFrameRef.current!); 
+            setIsPlaying(false); 
+            setIsCountingIn(false);
+            setCurrentCountInBeat(0);
+        }
         else {
             let start = pauseTimeRef.current >= durationRef.current ? 0 : pauseTimeRef.current;
-            playAudio(start); startTimeRef.current = audioContextRef.current!.currentTime - (start / playbackRateRef.current);
-            if (videoRef.current) { const vPos = start + videoOffsetRef.current; if (vPos >= 0) { videoRef.current.currentTime = vPos; videoRef.current.playbackRate = playbackRateRef.current; videoRef.current.play().catch(() => {}); } else videoRef.current.currentTime = 0; }
+            
+            const currentBpm = (songAnalysisRef.current?.bpm || 120) * playbackRateRef.current;
+            const beatDuration = 60 / currentBpm;
+            const countInDuration = isCountInEnabledRef.current ? countInClicksRef.current * beatDuration : 0;
+            
+            if (isCountInEnabledRef.current && audioContextRef.current) {
+                setIsCountingIn(true);
+                setCurrentCountInBeat(1);
+                
+                countInTimeoutsRef.current.forEach(clearTimeout);
+                countInTimeoutsRef.current = [];
+                scheduledClicksRef.current.forEach(osc => { try { osc.stop(); } catch(e) {} });
+                scheduledClicksRef.current = [];
+                
+                const ctx = audioContextRef.current;
+                if (ctx.state === 'suspended') ctx.resume();
+                const nowCtx = ctx.currentTime;
+                
+                // Play metronome clicks
+                for (let i = 0; i < countInClicksRef.current; i++) {
+                    const clickTime = nowCtx + i * beatDuration;
+                    const isFirstBeat = (i === 0);
+                    
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    if (masterGainRef.current) {
+                        gain.connect(masterGainRef.current);
+                    } else {
+                        gain.connect(ctx.destination);
+                    }
+                    
+                    osc.frequency.setValueAtTime(isFirstBeat ? 1200 : 800, clickTime);
+                    gain.gain.setValueAtTime(1, clickTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, clickTime + 0.08);
+                    
+                    osc.start(clickTime);
+                    osc.stop(clickTime + 0.1);
+                    scheduledClicksRef.current.push(osc);
+                    
+                    const delayMs = (i * beatDuration * 1000) / playbackRateRef.current;
+                    const timeoutId = setTimeout(() => {
+                        setCurrentCountInBeat(i + 1);
+                    }, delayMs);
+                    countInTimeoutsRef.current.push(timeoutId);
+                }
+                
+                const endTimeoutId = setTimeout(() => {
+                    setIsCountingIn(false);
+                    setCurrentCountInBeat(0);
+                }, (countInDuration * 1000) / playbackRateRef.current);
+                countInTimeoutsRef.current.push(endTimeoutId);
+            }
+            
+            playAudio(start, countInDuration); 
+            startTimeRef.current = audioContextRef.current!.currentTime + countInDuration - (start / playbackRateRef.current);
+            
+            if (videoRef.current) { 
+                const vPos = start + videoOffsetRef.current; 
+                if (vPos >= 0) { 
+                    videoRef.current.currentTime = vPos; 
+                    videoRef.current.playbackRate = playbackRateRef.current; 
+                    
+                    if (countInDuration > 0) {
+                        const videoTimeoutId = setTimeout(() => {
+                            if (isPlayingRef.current) {
+                                videoRef.current?.play().catch(() => {});
+                            }
+                        }, (countInDuration * 1000) / playbackRateRef.current);
+                        countInTimeoutsRef.current.push(videoTimeoutId);
+                    } else {
+                        videoRef.current.play().catch(() => {});
+                    }
+                } else videoRef.current.currentTime = 0; 
+            }
+            
             setIsPlaying(true);
             let lastRenderTime = 0;
             const update = () => {
-                // Advance now by actual time elapsed * playback rate
                 const now = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
                 const vNow = now + videoOffsetRef.current;
                 const cut = cutRegionsRef.current.find(r => now >= r.start && now < r.end);
@@ -330,10 +498,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const inactive = !!cut || (hasV && (now >= videoEndTimeRef.current || vNow >= videoDurationRef.current || vNow < 0));
                 let op = 1; if (inactive) op = 0; else { const vStart = Math.max(0, -videoOffsetRef.current), fi = videoFadeInRef.current, fo = videoFadeOutRef.current; if (fi > 0 && now < vStart + fi) op = (now - vStart) / fi; else if (fo > 0 && now > videoEndTimeRef.current - fo) op = (videoEndTimeRef.current - now) / fo; }
                 
+                // Do not update playhead during count-in
+                if (now < start) {
+                    setCurrentTime(start);
+                    animationFrameRef.current = requestAnimationFrame(update);
+                    return;
+                }
+                
                 if (inactive) { if (!isInCutRegionRef.current) { isInCutRegionRef.current = true; setIsInCutRegion(true); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(0, 0, 0.02); }); videoRef.current?.pause(); } }
                 else { const solo = tracksRef.current.some(t => t.soloed); tracksRef.current.forEach(t => { if (t.isVideoAudio) gainNodesRef.current.get(t.id)?.gain.setTargetAtTime(t.muted || (solo && !t.soloed) ? 0 : t.volume * op, 0, 0.02); }); if (isInCutRegionRef.current) { isInCutRegionRef.current = false; setIsInCutRegion(false); if (videoRef.current && vNow >= 0 && vNow < videoDurationRef.current) { videoRef.current.currentTime = vNow; videoRef.current.play().catch(() => {}); } } }
                 
-                // Section Loop Logic
                 const activeLoopSection = sectionsRef.current.find(s => s.loopMode !== 'none' && now >= s.start && now <= s.end + 0.1);
                 if (activeLoopSection) {
                     const isCloseToEnd = now >= activeLoopSection.end;
@@ -346,7 +520,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                             if (loopStatusRef.current.loopsRemaining !== 'infinite') {
                                 loopStatusRef.current.loopsRemaining--;
                             }
-                            // Seek immediately and re-start the frame so playhead keeps moving
                             seek(activeLoopSection.start);
                             lastLoopTriggerTimeRef.current = activeLoopSection.start;
                             animationFrameRef.current = requestAnimationFrame(update);
@@ -355,7 +528,6 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     }
                 }
                 
-                // Clear loop status if playhead is manually moved outside
                 if (loopStatusRef.current) {
                     const statusSection = sectionsRef.current.find(s => s.id === loopStatusRef.current?.sectionId);
                     if (!statusSection || now < statusSection.start || now > statusSection.end + 0.5) {
@@ -375,10 +547,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 animationFrameRef.current = requestAnimationFrame(update);
             }; animationFrameRef.current = requestAnimationFrame(update);
         }
-    }, [currentTime, playAudio]);
-
-    const stop = useCallback(() => { stopAudioInternal(); videoRef.current?.pause(); if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoOffsetRef.current); pauseTimeRef.current = 0; setCurrentTime(0); setIsPlaying(false); cancelAnimationFrame(animationFrameRef.current!); loopStatusRef.current = null; lastLoopTriggerTimeRef.current = 0; }, []);
-    const seek = useCallback((t: number) => { const was = isPlayingRef.current; if (was) stopAudioInternal(); pauseTimeRef.current = t; setCurrentTime(t); lastLoopTriggerTimeRef.current = 0; if (videoRef.current) videoRef.current.currentTime = Math.max(0, t + videoOffsetRef.current); if (was) { playAudio(t); startTimeRef.current = audioContextRef.current!.currentTime - (t / playbackRateRef.current); if (videoRef.current && (t + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); } }, [playAudio]);
+    }, [currentTime, playAudio, seek, stop]);
 
     const setTrackVolume = (id: string, volume: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
     const setTrackPan = (id: string, pan: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));
@@ -456,10 +625,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             audioOutputDeviceId,
             audioOutputMaxChannels,
             showLyrics,
-            invertBackground
+            invertBackground,
+            isCountInEnabled,
+            countInClicks
         };
         const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `multitrack-preset-${new Date().toISOString().split('T')[0]}.json`; a.click();
-    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground]);
+    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks]);
 
     const importPreset = useCallback(async (file: File) => {
         try { 
@@ -505,6 +676,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
             if (p.showLyrics !== undefined) setShowLyrics(p.showLyrics);
             if (p.invertBackground !== undefined) setInvertBackground(p.invertBackground);
+            if (p.isCountInEnabled !== undefined) setIsCountInEnabled(p.isCountInEnabled);
+            if (p.countInClicks !== undefined) setCountInClicks(p.countInClicks);
         } catch { alert("Error al importar."); }
     }, []);
 
@@ -609,7 +782,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
 
         let analysis = placeholder?.analysis || s.analysis || undefined;
-        if (!analysis && nt.length > 0) {
+        // Force re-analysis if we are resolving a placeholder or if it has a default/blank tempo
+        const isPlaceholderLoaded = placeholder?.isPlaceholder || s.isPlaceholder;
+        const lacksValidBpm = !analysis || !analysis.bpm || analysis.bpm === 120;
+        
+        if ((!analysis || isPlaceholderLoaded || lacksValidBpm) && nt.length > 0) {
             try {
                 setUploadMessage('Analizando BPM/KEY...');
                 if (onProgress) onProgress(95, 'Analizando BPM/KEY...');
@@ -876,7 +1053,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             tracks, isPlaying, currentTime, duration, addTrack, addVideoTrack, removeTrack, clearTracks, togglePlay, stop, seek, setTrackVolume, setTrackPan, toggleTrackMute, toggleTrackSolo, setVideoElement: (el) => { videoRef.current = el; }, masterVolume, setMasterVolume, playlist, setPlaylist, activeSongId, addSongToPlaylist, removeSongFromPlaylist, updateSongInPlaylist, loadSong, loadPreparedSong, updateActiveSongCache, prepareSongCache, exportPreset, importPreset, videoDuration, trimVideoToAudio, videoOffset, setVideoOffset, videoEndTime, setVideoEndTime, videoFadeIn, setVideoFadeIn, videoFadeOut, setVideoFadeOut, videoOpacity, cutRegions, setCutRegions, splitPoints, setSplitPoints, addCutRegion, removeCutRegion, revertVideo, isInCutRegion, lyrics, setLyrics, addLyricBlock: (b) => setLyrics(p => [...p, {...b, id: crypto.randomUUID()}]), updateLyricBlock: (id, u) => setLyrics(p => p.map(l => l.id === id ? {...l, ...u} : l)), removeLyricBlock: (id) => setLyrics(p => p.filter(l => l.id !== id)), clearLyrics: () => setLyrics([]), lyricsSettings, setLyricsSettings, invertBackground, setInvertBackground, showLyrics, setShowLyrics, panelSizes, setPanelSizes, layoutVersion, loadingProgress, songAnalysis, getMasterLevels, getTrackLevel, isUploading, setIsUploading, uploadMessage, setUploadMessage, processZipFile, processVideoFile: async (f) => { await addVideoTrack(f); }, sections, setSections, pitchShift, setPitchShift, playbackRate, setPlaybackRate,
             customChords, setCustomChords, addChordBlock: (b) => setCustomChords(p => [...p, {...b, id: crypto.randomUUID()}]), updateChordBlock: (id, u) => setCustomChords(p => p.map(c => c.id === id ? {...c, ...u} : c)), removeChordBlock: (id) => setCustomChords(p => p.filter(c => c.id !== id)), clearChords: () => setCustomChords([]),
             audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel,
-            isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData
+            isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData,
+            isCountInEnabled, setIsCountInEnabled, countInClicks, setCountInClicks, isCountingIn, currentCountInBeat
         }}>
             {children}
         </AudioEngineContext.Provider>

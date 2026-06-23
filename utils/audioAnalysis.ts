@@ -26,20 +26,48 @@ export interface AudioAnalysis {
 async function detectBPM(buffer: AudioBuffer): Promise<number> {
     try {
         console.log(`Analyzing BPM on buffer: duration ${buffer.duration}s`);
-        const result = await guess(buffer);
-        console.log(`BPM guess result:`, result);
-        return Math.round(result.bpm);
-    } catch (e) {
-        console.warn('BPM detection failed, trying fallback:', e);
-        try {
-            const result = await guess(buffer, 0, Math.min(buffer.duration, 15));
-            console.log(`Fallback BPM guess result:`, result);
+        // For best results, use a 20-second segment where the beat is established
+        // First choice: starting at 30 seconds
+        const startOffset = buffer.duration > 50 ? 30 : 0;
+        const analyzeDuration = Math.min(20, buffer.duration - startOffset);
+        
+        console.log(`BPM detection primary attempt: offset ${startOffset}s, duration ${analyzeDuration}s`);
+        const result = await guess(buffer, startOffset, analyzeDuration);
+        console.log(`BPM guess primary result:`, result);
+        if (result.bpm && result.bpm > 0) {
             return Math.round(result.bpm);
-        } catch (err) {
-            console.error('Fallback BPM detection completely failed:', err);
-            return 0;
         }
+    } catch (e) {
+        console.warn('BPM primary attempt failed, trying fallback 1 (first 20 seconds):', e);
     }
+
+    // Fallback 1: analyze first 20 seconds
+    try {
+        const analyzeDuration = Math.min(20, buffer.duration);
+        const result = await guess(buffer, 0, analyzeDuration);
+        console.log(`BPM guess fallback 1 result:`, result);
+        if (result.bpm && result.bpm > 0) {
+            return Math.round(result.bpm);
+        }
+    } catch (e) {
+        console.warn('BPM fallback 1 failed, trying fallback 2 (midpoint of song):', e);
+    }
+
+    // Fallback 2: analyze a 20-second segment in the middle of the song
+    try {
+        if (buffer.duration > 40) {
+            const startOffset = Math.floor(buffer.duration / 2) - 10;
+            const result = await guess(buffer, startOffset, 20);
+            console.log(`BPM guess fallback 2 result:`, result);
+            if (result.bpm && result.bpm > 0) {
+                return Math.round(result.bpm);
+            }
+        }
+    } catch (e) {
+        console.error('BPM fallback 2 failed:', e);
+    }
+
+    return 0;
 }
 
 /**
@@ -233,12 +261,109 @@ function toFlat(note: string): string {
     return map[note] || note;
 }
 
+function detectBpmFromPeaks(buffer: AudioBuffer): number {
+    try {
+        const data = buffer.getChannelData(0);
+        const sampleRate = buffer.sampleRate;
+        
+        // Find absolute maximum peak amplitude
+        let maxVal = 0;
+        for (let i = 0; i < data.length; i++) {
+            const val = Math.abs(data[i]);
+            if (val > maxVal) maxVal = val;
+        }
+        
+        if (maxVal < 0.01) return 0; // Quiet buffer
+        
+        // Set threshold at 30% of maximum amplitude
+        const threshold = maxVal * 0.3;
+        const minDistanceSamples = Math.round(sampleRate * 0.22); // ~220ms minimum distance (max ~270 BPM)
+        
+        const peakIndices: number[] = [];
+        let lastPeakIndex = -minDistanceSamples;
+        
+        for (let i = 0; i < data.length; i++) {
+            const val = Math.abs(data[i]);
+            if (val > threshold && (i - lastPeakIndex) > minDistanceSamples) {
+                peakIndices.push(i);
+                lastPeakIndex = i;
+            }
+        }
+        
+        if (peakIndices.length < 8) return 0; // Too few peaks
+        
+        // Calculate differences (intervals) between peaks in seconds
+        const intervals: number[] = [];
+        for (let i = 1; i < peakIndices.length; i++) {
+            intervals.push((peakIndices[i] - peakIndices[i - 1]) / sampleRate);
+        }
+        
+        // Group intervals to find the most common interval (tempo)
+        // Round to 2 decimal places to group intervals in 10ms bins
+        const bins: Record<string, number[]> = {};
+        intervals.forEach(interval => {
+            const rounded = interval.toFixed(2);
+            if (!bins[rounded]) bins[rounded] = [];
+            bins[rounded].push(interval);
+        });
+        
+        // Find the bin with the highest count
+        let bestBinKey = "";
+        let maxCount = 0;
+        for (const binKey in bins) {
+            if (bins[binKey].length > maxCount) {
+                maxCount = bins[binKey].length;
+                bestBinKey = binKey;
+            }
+        }
+        
+        if (!bestBinKey) return 0;
+        
+        // Confidence check: the most common interval must occur in at least 25% of intervals
+        if (maxCount < intervals.length * 0.25) {
+            console.log(`Peak detection confidence low (${maxCount}/${intervals.length} intervals), falling back.`);
+            return 0;
+        }
+        
+        // Calculate the exact average interval within the modal bin to avoid 1-2 BPM quantization rounding errors
+        const matchingIntervals = bins[bestBinKey];
+        const sumIntervals = matchingIntervals.reduce((sum, val) => sum + val, 0);
+        const targetInterval = sumIntervals / matchingIntervals.length;
+        
+        if (!targetInterval || targetInterval <= 0) return 0;
+        
+        // Calculate BPM
+        const bpm = 60 / targetInterval;
+        
+        // Validate range (45 to 220 BPM)
+        if (bpm >= 45 && bpm <= 220) {
+            return Math.round(bpm);
+        }
+    } catch (e) {
+        console.error("Error in peak BPM detection:", e);
+    }
+    return 0;
+}
+
 export async function analyzeAudio(buffer: AudioBuffer, rhythmBuffer?: AudioBuffer): Promise<AudioAnalysis> {
     const rBuffer = rhythmBuffer || buffer;
-    const [bpm, keyResult] = await Promise.all([
-        detectBPM(rBuffer),
-        detectKey(buffer)
-    ]);
+    
+    // Try custom peak detection first (extremely precise on click/rhythm tracks)
+    let bpm = detectBpmFromPeaks(rBuffer);
+    console.log(`BPM from custom peak detection:`, bpm);
+    
+    const keyResult = await detectKey(buffer);
+    
+    if (bpm <= 0) {
+        // Fallback to web-audio-beat-detector if custom peak detection fails
+        bpm = await detectBPM(rBuffer);
+        console.log(`BPM from web-audio-beat-detector fallback:`, bpm);
+    }
+    
+    // If still 0, default to 120
+    if (bpm <= 0) {
+        bpm = 120;
+    }
 
     const timeSignature = detectTimeSignature(rBuffer, bpm);
 
