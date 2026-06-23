@@ -281,12 +281,25 @@ function detectBpmFromPeaks(buffer: AudioBuffer): number {
         
         const peakIndices: number[] = [];
         let lastPeakIndex = -minDistanceSamples;
+        const searchWindow = Math.round(sampleRate * 0.03); // 30ms local peak window search
         
         for (let i = 0; i < data.length; i++) {
             const val = Math.abs(data[i]);
             if (val > threshold && (i - lastPeakIndex) > minDistanceSamples) {
-                peakIndices.push(i);
-                lastPeakIndex = i;
+                // Find local maximum within the search window to avoid threshold jitter
+                let localMaxVal = val;
+                let localMaxIdx = i;
+                const endSearch = Math.min(i + searchWindow, data.length);
+                for (let j = i + 1; j < endSearch; j++) {
+                    const localVal = Math.abs(data[j]);
+                    if (localVal > localMaxVal) {
+                        localMaxVal = localVal;
+                        localMaxIdx = j;
+                    }
+                }
+                peakIndices.push(localMaxIdx);
+                lastPeakIndex = localMaxIdx;
+                i = localMaxIdx; // Advance iterator to the peak
             }
         }
         
@@ -325,8 +338,15 @@ function detectBpmFromPeaks(buffer: AudioBuffer): number {
             return 0;
         }
         
-        // Calculate the exact average interval within the modal bin to avoid 1-2 BPM quantization rounding errors
-        const matchingIntervals = bins[bestBinKey];
+        // Calculate the exact average interval within a +/- 5% tolerance window around the modal bin key
+        // to prevent bin-trimming/boundary quantization rounding errors (e.g. 144 BPM detecting as 143 BPM)
+        const targetCenter = parseFloat(bestBinKey);
+        const matchingIntervals = intervals.filter(val => 
+            Math.abs(val - targetCenter) / targetCenter < 0.05
+        );
+        
+        if (matchingIntervals.length === 0) return 0;
+        
         const sumIntervals = matchingIntervals.reduce((sum, val) => sum + val, 0);
         const targetInterval = sumIntervals / matchingIntervals.length;
         
