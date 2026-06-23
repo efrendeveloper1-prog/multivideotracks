@@ -263,14 +263,14 @@ const EditorContent: React.FC = () => {
     const videoAudioTrack = tracks.find(t => t.isVideoAudio);
     const hasVideo = !!videoTrack;
 
-    // Reset edit mode when video is removed
+    // Reset edit mode when all tracks/video are removed
     useEffect(() => {
-        if (!hasVideo) {
+        if (!hasVideo && duration <= 0) {
             setEditMode(false);
             setSelectedSegmentIndex(null);
             setSplitPoints([]);
         }
-    }, [hasVideo]);
+    }, [hasVideo, duration]);
 
     // Connect video source instantly when video track changes
     useEffect(() => {
@@ -855,7 +855,7 @@ const EditorContent: React.FC = () => {
 
                 <div className="flex items-center gap-1 sm:gap-2">
                     {/* Revert button — only visible in edit mode */}
-                    {editMode && hasVideo && (
+                    {editMode && (hasVideo || duration > 0) && (
                         <>
                             <button
                                 onClick={() => {
@@ -893,15 +893,15 @@ const EditorContent: React.FC = () => {
                     {/* EDIT button */}
                     <button
                         onClick={() => {
-                            if (!hasVideo) return;
+                            if (!(hasVideo || duration > 0)) return;
                             setEditMode(prev => !prev);
                             setSelectedSegmentIndex(null);
                         }}
-                        disabled={!hasVideo}
-                        title={hasVideo ? (editMode ? 'Salir del modo edición' : 'Entrar en modo edición') : 'Carga un video para editar'}
+                        disabled={!(hasVideo || duration > 0)}
+                        title={hasVideo || duration > 0 ? (editMode ? 'Salir del modo edición' : 'Entrar en modo edición') : 'Carga pistas de audio o video para editar'}
                         className={`
                             px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-all duration-200
-                            ${!hasVideo
+                            ${!(hasVideo || duration > 0)
                                 ? 'bg-gray-800 text-gray-600 cursor-not-allowed opacity-50'
                                 : editMode
                                     ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/50 ring-1 ring-blue-400'
