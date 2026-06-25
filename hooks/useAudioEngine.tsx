@@ -138,6 +138,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const scheduledClicksRef = useRef<OscillatorNode[]>([]);
     const countInTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+    const videoSyncedAfterCountInRef = useRef<boolean>(false);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const recordingAnalyserRef = useRef<AnalyserNode | null>(null);
     const recordedChunksRef = useRef<Blob[]>([]);
@@ -204,7 +205,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             try {
                 const { SoundTouchNode } = await import('@soundtouchjs/audio-worklet');
-                await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js');
+                await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js?v=2');
                 soundTouchNodeClassRef.current = SoundTouchNode;
             } catch (e) {
                 console.error("Failed to load SoundTouch processor", e);
@@ -301,7 +302,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         countInTimeoutsRef.current = [];
     };
 
-    const playAudio = useCallback((start: number, startDelay: number = 0) => {
+    const playAudio = useCallback((start: number, startDelay: number = 0, baseTime?: number) => {
         if (!audioContextRef.current || !masterGainRef.current) return;
         if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume();
         const solo = tracksRef.current.some(t => t.soloed);
@@ -364,14 +365,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             s.playbackRate.value = playbackRateRef.current;
             
             // Adjust start time for count-in delay
-            let w = audioContextRef.current!.currentTime + startDelay;
+            const nowTime = baseTime !== undefined ? baseTime : audioContextRef.current!.currentTime;
+            let w = nowTime + startDelay;
             let o = start;
             if (t.isVideoAudio) {
                 const sum = start + videoOffsetRef.current;
                 if (sum >= 0) {
                     o = sum;
                 } else {
-                    w = audioContextRef.current!.currentTime + startDelay + Math.abs(sum) / playbackRateRef.current;
+                    w = nowTime + startDelay + Math.abs(sum) / playbackRateRef.current;
                     o = 0;
                 }
             }
@@ -393,6 +395,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsPlaying(false); 
         setIsCountingIn(false);
         setCurrentCountInBeat(0);
+        videoSyncedAfterCountInRef.current = false;
         cancelAnimationFrame(animationFrameRef.current!); 
         loopStatusRef.current = null; 
         lastLoopTriggerTimeRef.current = 0; 
@@ -410,6 +413,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         pauseTimeRef.current = targetTime; 
         setCurrentTime(targetTime); 
         lastLoopTriggerTimeRef.current = 0; 
+        videoSyncedAfterCountInRef.current = true;
         if (videoRef.current) videoRef.current.currentTime = Math.max(0, targetTime + videoOffsetRef.current); 
         if (was) { 
             playAudio(targetTime, 0); 
@@ -442,22 +446,28 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const beatDuration = 60 / currentBpm;
             const countInDuration = isCountInEnabledRef.current ? countInClicksRef.current * beatDuration : 0;
             
-            if (isCountInEnabledRef.current && audioContextRef.current) {
+            const ctx = audioContextRef.current;
+            if (ctx && ctx.state === 'suspended') ctx.resume();
+            
+            // Single base time to synchronize both clicks and multitrack audio
+            let baseTime = ctx ? ctx.currentTime : 0;
+            
+            if (isCountInEnabledRef.current && ctx) {
                 setIsCountingIn(true);
                 setCurrentCountInBeat(1);
+                videoSyncedAfterCountInRef.current = false;
                 
                 countInTimeoutsRef.current.forEach(clearTimeout);
                 countInTimeoutsRef.current = [];
                 scheduledClicksRef.current.forEach(osc => { try { osc.stop(); } catch(e) {} });
                 scheduledClicksRef.current = [];
                 
-                const ctx = audioContextRef.current;
-                if (ctx.state === 'suspended') ctx.resume();
-                const nowCtx = ctx.currentTime;
+                // Add a small safety buffer (50ms) to ensure Web Audio hardware is active and the first click isn't cut off
+                baseTime = ctx.currentTime + 0.05;
                 
                 // Play metronome clicks
                 for (let i = 0; i < countInClicksRef.current; i++) {
-                    const clickTime = nowCtx + i * beatDuration;
+                    const clickTime = baseTime + i * beatDuration;
                     const isFirstBeat = (i === 0);
                     
                     const osc = ctx.createOscillator();
@@ -489,10 +499,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     setCurrentCountInBeat(0);
                 }, (countInDuration * 1000) / playbackRateRef.current);
                 countInTimeoutsRef.current.push(endTimeoutId);
+            } else {
+                videoSyncedAfterCountInRef.current = true;
             }
             
-            playAudio(start, countInDuration); 
-            startTimeRef.current = audioContextRef.current!.currentTime + countInDuration - (start / playbackRateRef.current);
+            playAudio(start, countInDuration, baseTime); 
+            startTimeRef.current = baseTime + countInDuration - (start / playbackRateRef.current);
             
             if (videoRef.current) { 
                 const vPos = start + videoOffsetRef.current; 
@@ -524,6 +536,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     setCurrentTime(start);
                     animationFrameRef.current = requestAnimationFrame(update);
                     return;
+                }
+
+                // Force video alignment at the end of the count-in to ensure perfect sync
+                if (videoRef.current && isCountInEnabledRef.current && !videoSyncedAfterCountInRef.current) {
+                    videoSyncedAfterCountInRef.current = true;
+                    if (vNow >= 0 && vNow < videoDurationRef.current) {
+                        videoRef.current.currentTime = vNow;
+                        videoRef.current.play().catch(() => {});
+                    }
                 }
                 
                 const cut = cutRegionsRef.current.find(r => now >= r.start && now < r.end);
@@ -643,14 +664,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setCustomChords(s.cachedChords || []);
     }, [updateActiveSongCache, stop]);
 
-    const exportPreset = useCallback(() => {
+    const exportPreset = useCallback(async () => {
         const activeSongTitle = activeSongId ? playlist.find(s => s.id === activeSongId)?.title : '';
         const defaultName = activeSongTitle 
-            ? `preset-${activeSongTitle.replace(/[/\\?%*:|"<>]/g, '-')}`
-            : `preset-${new Date().toISOString().split('T')[0]}`;
-        const inputName = window.prompt("Introduce el nombre para el preset:", defaultName);
-        if (inputName === null) return; // User cancelled
-        const fileName = (inputName.trim() || defaultName).replace(/[/\\?%*:|"<>]/g, '-');
+            ? `preset-${activeSongTitle.replace(/[/\\?%*:|"<>]/g, '-')}.json`
+            : `preset-${new Date().toISOString().split('T')[0]}.json`;
 
         const p = { 
             version: "1.0", 
@@ -687,7 +705,37 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             isCountInEnabled,
             countInClicks
         };
-        const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${fileName}.json`; a.click();
+
+        if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+            try {
+                const handle = await (window as any).showSaveFilePicker({
+                    suggestedName: defaultName,
+                    types: [{
+                        description: 'Preset JSON',
+                        accept: {
+                            'application/json': ['.json'],
+                        },
+                    }],
+                });
+                const writable = await handle.createWritable();
+                await writable.write(JSON.stringify(p, null, 2));
+                await writable.close();
+                return;
+            } catch (err: any) {
+                if (err.name === 'AbortError') {
+                    return;
+                }
+                console.error("showSaveFilePicker error, falling back:", err);
+            }
+        }
+
+        const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }); 
+        const url = URL.createObjectURL(blob); 
+        const a = document.createElement('a'); 
+        a.href = url; 
+        a.download = defaultName; 
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks]);
 
     const importPreset = useCallback(async (file: File) => {

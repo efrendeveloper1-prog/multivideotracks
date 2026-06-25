@@ -129,6 +129,30 @@ const EditorContent: React.FC = () => {
     const timelineRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [zoomLevel, setZoomLevel] = useState(1);
+    const [activeTool, setActiveTool] = useState<'select' | 'zoom'>('select');
+    const [zoomDragStart, setZoomDragStart] = useState<{ x: number; y: number } | null>(null);
+    const [zoomDragCurrent, setZoomDragCurrent] = useState<{ x: number; y: number } | null>(null);
+    const [isShiftPressed, setIsShiftPressed] = useState(false);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftPressed(true);
+            }
+        };
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === 'Shift') {
+                setIsShiftPressed(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
+    }, []);
+
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showAudioSettings, setShowAudioSettings] = useState(false);
     const [showChordsTrack, setShowChordsTrack] = useState(true);
@@ -419,7 +443,7 @@ const EditorContent: React.FC = () => {
                 const zoomDelta = e.deltaY < 0 ? 1.15 : (1 / 1.15); // scroll up = zoom in
                 
                 setZoomLevel(prev => {
-                    const next = Math.max(1, Math.min(prev * zoomDelta, 30));
+                    const next = Math.max(1, Math.min(prev * zoomDelta, 300));
                     if (next === prev) return prev;
                     
                     const container = scrollContainerRef.current;
@@ -640,6 +664,91 @@ const EditorContent: React.FC = () => {
             setSelectedSegmentIndex(prev => prev === segIdx ? null : segIdx);
         }
     }, [editMode, duration, getTimeFromClientX, seek, segmentBoundaries]);
+
+    const handleZoomMouseDown = (e: React.MouseEvent) => {
+        if (e.button !== 0 && e.button !== 2) return;
+        e.stopPropagation();
+        setZoomDragStart({ x: e.clientX, y: e.clientY });
+        setZoomDragCurrent({ x: e.clientX, y: e.clientY });
+    };
+
+    const handleZoomMouseMove = (e: React.MouseEvent) => {
+        if (!zoomDragStart) return;
+        e.stopPropagation();
+        setZoomDragCurrent({ x: e.clientX, y: e.clientY });
+    };
+
+    const handleZoomMouseUp = (e: React.MouseEvent) => {
+        if (!zoomDragStart || !zoomDragCurrent) return;
+        e.stopPropagation();
+
+        const container = scrollContainerRef.current;
+        const timeline = timelineRef.current;
+        if (!container || !timeline || duration <= 0) {
+            setZoomDragStart(null);
+            setZoomDragCurrent(null);
+            return;
+        }
+
+        const rect = timeline.getBoundingClientRect();
+        const dx = Math.abs(e.clientX - zoomDragStart.x);
+        const isZoomOut = e.shiftKey || e.altKey || e.button === 2;
+
+        if (dx < 5) {
+            const clickTime = getTimeFromClientX(e.clientX);
+            if (clickTime !== null) {
+                const zoomFactor = isZoomOut ? 0.5 : 2.0;
+
+                setZoomLevel(prev => {
+                    const next = Math.max(1, Math.min(prev * zoomFactor, 300));
+                    if (next === prev) return prev;
+
+                    const containerRect = container.getBoundingClientRect();
+                    const pointerX = e.clientX - containerRect.left;
+                    const pointerAbsoluteX = pointerX + container.scrollLeft;
+                    const ratio = pointerAbsoluteX / (prev * containerRect.width);
+
+                    requestAnimationFrame(() => {
+                        if (scrollContainerRef.current) {
+                            const newWidth = scrollContainerRef.current.scrollWidth;
+                            scrollContainerRef.current.scrollLeft = newWidth * ratio - pointerX;
+                        }
+                    });
+
+                    return next;
+                });
+            }
+        } else {
+            if (!isZoomOut) {
+                const x1 = Math.min(zoomDragStart.x, zoomDragCurrent.x);
+                const x2 = Math.max(zoomDragStart.x, zoomDragCurrent.x);
+
+                const t1 = getTimeFromClientX(x1);
+                const t2 = getTimeFromClientX(x2);
+
+                if (t1 !== null && t2 !== null) {
+                    let dragDuration = t2 - t1;
+                    if (dragDuration > 0.1) {
+                        dragDuration = Math.max(0.5, dragDuration);
+                        const newZoomLevel = Math.max(1, Math.min(duration / dragDuration, 300));
+
+                        setZoomLevel(newZoomLevel);
+
+                        requestAnimationFrame(() => {
+                            if (scrollContainerRef.current) {
+                                const containerRect = scrollContainerRef.current.getBoundingClientRect();
+                                const t1AbsoluteX = (t1 / duration) * (newZoomLevel * containerRect.width);
+                                scrollContainerRef.current.scrollLeft = t1AbsoluteX;
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        setZoomDragStart(null);
+        setZoomDragCurrent(null);
+    };
 
     return (
         <div className="flex flex-col h-screen h-[100dvh] bg-black text-white overflow-hidden font-sans">
@@ -890,11 +999,47 @@ const EditorContent: React.FC = () => {
                             </button>
                         </>
                     )}
+                    {/* ZOOM (Lupa) button */}
+                    <button
+                        onClick={() => {
+                            if (!(hasVideo || duration > 0)) return;
+                            setActiveTool(prev => {
+                                const next = prev === 'zoom' ? 'select' : 'zoom';
+                                if (next === 'zoom') {
+                                    setEditMode(false);
+                                }
+                                return next;
+                            });
+                        }}
+                        disabled={!(hasVideo || duration > 0)}
+                        title={hasVideo || duration > 0 ? (activeTool === 'zoom' ? 'Desactivar Lupa' : 'Activar Lupa (Zoom)') : 'Carga pistas de audio o video para usar la lupa'}
+                        className={`
+                            px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-all duration-200 flex items-center gap-1
+                            ${!(hasVideo || duration > 0)
+                                ? 'bg-gray-800 text-gray-600 cursor-not-allowed opacity-50'
+                                : activeTool === 'zoom'
+                                    ? 'bg-teal-600 hover:bg-teal-500 text-white shadow-lg shadow-teal-900/50 ring-1 ring-teal-400'
+                                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }
+                        `}
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <span>{activeTool === 'zoom' ? 'LUPA ON' : 'LUPA'}</span>
+                    </button>
+
                     {/* EDIT button */}
                     <button
                         onClick={() => {
                             if (!(hasVideo || duration > 0)) return;
-                            setEditMode(prev => !prev);
+                            setEditMode(prev => {
+                                const next = !prev;
+                                if (next) {
+                                    setActiveTool('select');
+                                }
+                                return next;
+                            });
                             setSelectedSegmentIndex(null);
                         }}
                         disabled={!(hasVideo || duration > 0)}
@@ -965,14 +1110,20 @@ const EditorContent: React.FC = () => {
                         {/* Zoom/Scroll Container */}
                         <div 
                             ref={scrollContainerRef}
-                            className="flex-1 w-full flex flex-col overflow-x-auto overflow-y-hidden custom-scrollbar"
+                            className="flex-1 w-full flex flex-col overflow-x-auto overflow-y-hidden custom-scrollbar timeline-scroll-container"
                             style={{ scrollbarWidth: 'thin', scrollbarColor: '#4b5563 #111827' }}
                         >
                             <div
                                 ref={timelineRef}
-                                className={`flex-1 flex flex-col relative min-h-0 ${editMode ? 'cursor-pointer' : 'cursor-crosshair'}`}
+                                className={`flex-1 flex flex-col relative min-h-0 ${
+                                    activeTool === 'zoom' 
+                                        ? (isShiftPressed ? 'cursor-zoom-out' : 'cursor-zoom-in') 
+                                        : editMode 
+                                            ? 'cursor-pointer' 
+                                            : 'cursor-crosshair'
+                                }`}
                                 style={{ width: `${zoomLevel * 100}%`, minWidth: '100%' }}
-                                onClick={handleTimelineClick}
+                                onClick={activeTool === 'zoom' ? undefined : handleTimelineClick}
                             >
 
                                 <Group 
@@ -1333,6 +1484,27 @@ const EditorContent: React.FC = () => {
                             className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none"
                             style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
                         />
+
+                        {/* Zoom Tool Interaction Overlay */}
+                        {activeTool === 'zoom' && (
+                            <div
+                                className={`absolute inset-0 z-50 ${isShiftPressed ? 'cursor-zoom-out' : 'cursor-zoom-in'}`}
+                                onMouseDown={handleZoomMouseDown}
+                                onMouseMove={handleZoomMouseMove}
+                                onMouseUp={handleZoomMouseUp}
+                                onContextMenu={(e) => e.preventDefault()}
+                            >
+                                {zoomDragStart && zoomDragCurrent && Math.abs(zoomDragCurrent.x - zoomDragStart.x) >= 5 && timelineRef.current && (
+                                    <div
+                                        className="absolute top-0 bottom-0 bg-teal-500/20 border-l border-r border-teal-400 pointer-events-none z-50"
+                                        style={{
+                                            left: `${Math.min(zoomDragStart.x, zoomDragCurrent.x) - timelineRef.current.getBoundingClientRect().left}px`,
+                                            width: `${Math.abs(zoomDragCurrent.x - zoomDragStart.x)}px`
+                                        }}
+                                    />
+                                )}
+                            </div>
+                        )}
                             </div>
                         </div>
                     </div>

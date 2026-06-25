@@ -882,6 +882,32 @@ var SoundTouchProcessor = class extends AudioWorkletProcessor {
 		const input = inputs[0];
 		const output = outputs[0];
 		if (!input || !input.length || !output[0] || !output[0].length) return true;
+
+		const rate = (parameters["rate"] && parameters["rate"].length > 0) ? parameters["rate"][0] : 1;
+		const tempo = (parameters["tempo"] && parameters["tempo"].length > 0) ? parameters["tempo"][0] : 1;
+		const pitch = (parameters["pitch"] && parameters["pitch"].length > 0) ? parameters["pitch"][0] : 1;
+		const pitchSemitones = (parameters["pitchSemitones"] && parameters["pitchSemitones"].length > 0) ? parameters["pitchSemitones"][0] : 0;
+		const playbackRate = (parameters["playbackRate"] && parameters["playbackRate"].length > 0) ? parameters["playbackRate"][0] : 1;
+
+		// Bypass SoundTouch processing when parameters are at default values to eliminate 133ms buffering latency
+		if (rate === 1 && tempo === 1 && pitch === 1 && pitchSemitones === 0 && playbackRate === 1) {
+			const numChannels = Math.min(input.length, output.length);
+			for (let c = 0; c < numChannels; c++) {
+				const inChan = input[c];
+				const outChan = output[c];
+				if (inChan && outChan) {
+					outChan.set(inChan);
+				}
+			}
+			for (let c = numChannels; c < output.length; c++) {
+				if (output[c]) {
+					output[c].fill(0);
+				}
+			}
+			this._pipe.clear();
+			return true;
+		}
+
 		const leftInput = input[0];
 		const rightInput = input.length > 1 ? input[1] : input[0];
 		const leftOutput = output[0];
@@ -891,11 +917,6 @@ var SoundTouchProcessor = class extends AudioWorkletProcessor {
 			this._samples = new Float32Array(frameCount * 2);
 			this._outputSamples = new Float32Array(frameCount * 2);
 		}
-		const rate = parameters["rate"][0];
-		const tempo = parameters["tempo"][0];
-		const pitch = parameters["pitch"][0];
-		const pitchSemitones = parameters["pitchSemitones"][0];
-		const playbackRate = parameters["playbackRate"][0];
 		this._pipe.rate = rate;
 		this._pipe.tempo = tempo;
 		this._pipe.pitch = pitch * Math.pow(2, pitchSemitones / 12) / playbackRate;
