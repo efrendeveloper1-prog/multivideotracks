@@ -60,6 +60,46 @@ const sortTracks = (list: Track[]) => [...list].sort((a,b) => {
     return (isG(a.name) ? -1 : 0) - (isG(b.name) ? -1 : 0);
 });
 
+const getSoundTouchLatency = (sampleRate: number): number => {
+    const tempo = 1;
+    const overlapMs = 8;
+    
+    const AUTOSEQ_C = 130;
+    const AUTOSEQ_K = -20;
+    const AUTOSEQ_AT_MIN = 125;
+    const AUTOSEQ_AT_MAX = 50;
+    
+    let seq = AUTOSEQ_C + AUTOSEQ_K * tempo;
+    seq = seq < AUTOSEQ_AT_MAX ? AUTOSEQ_AT_MAX : (seq > AUTOSEQ_AT_MIN ? AUTOSEQ_AT_MIN : seq);
+    const sequenceMs = Math.floor(seq + 0.5);
+    
+    const AUTOSEEK_C = 25.66666667;
+    const AUTOSEEK_K = -2.666666667;
+    const AUTOSEEK_AT_MIN = 25;
+    const AUTOSEEK_AT_MAX = 15;
+    
+    let seek = AUTOSEEK_C + AUTOSEEK_K * tempo;
+    seek = seek < AUTOSEEK_AT_MAX ? AUTOSEEK_AT_MAX : (seek > AUTOSEEK_AT_MIN ? AUTOSEEK_AT_MIN : seek);
+    const seekWindowMs = Math.floor(seek + 0.5);
+    
+    const seekWindowLength = Math.floor(sampleRate * sequenceMs / 1000);
+    const seekLength = Math.floor(sampleRate * seekWindowMs / 1000);
+    
+    let overlapLength = sampleRate * overlapMs / 1000;
+    overlapLength = overlapLength < 16 ? 16 : overlapLength;
+    overlapLength -= overlapLength % 8;
+    
+    const nominalSkip = tempo * (seekWindowLength - overlapLength);
+    const intskip = Math.floor(nominalSkip + 0.5);
+    const sampleReq = Math.max(intskip + overlapLength, seekWindowLength) + seekLength;
+    
+    const N = overlapLength + sampleReq;
+    const K = Math.ceil(N / 128);
+    const latencySamples = (K - 1) * 128;
+    return latencySamples / sampleRate;
+};
+
+
 export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [tracks, setTracks] = useState<Track[]>([]);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -161,6 +201,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Buses and ST nodes
     const soundTouchNodeClassRef = useRef<any>(null);
     const soundTouchNodesRef = useRef<Map<string, any>>(new Map());
+    const delayNodesRef = useRef<Map<string, DelayNode>>(new Map());
+    const soundTouchLatencyRef = useRef<number>(0);
+    const lastSeekTargetRef = useRef<number | null>(null);
+    const lastSeekTimeRef = useRef<number>(0);
 
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const startTimeRef = useRef<number>(0);
@@ -207,6 +251,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const { SoundTouchNode } = await import('@soundtouchjs/audio-worklet');
                 await SoundTouchNode.register(audioContextRef.current, '/soundtouch-processor.js?v=2');
                 soundTouchNodeClassRef.current = SoundTouchNode;
+                if (audioContextRef.current) {
+                    soundTouchLatencyRef.current = getSoundTouchLatency(audioContextRef.current.sampleRate);
+                }
             } catch (e) {
                 console.error("Failed to load SoundTouch processor", e);
             }
@@ -230,6 +277,19 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 try {
                     st.pitchSemitones.value = isDrum ? 0 : pitchShift;
                     st.playbackRate.value = playbackRate;
+                } catch(e) {}
+            });
+        }
+        if (delayNodesRef.current) {
+            const latency = (pitchShift !== 0 || playbackRate !== 1) ? soundTouchLatencyRef.current : 0;
+            delayNodesRef.current.forEach((d, key) => {
+                const isDrum = key.endsWith('_true');
+                let targetDelay = 0;
+                if (isDrum && playbackRate === 1 && pitchShift !== 0) {
+                    targetDelay = latency;
+                }
+                try {
+                    d.delayTime.setValueAtTime(targetDelay, audioContextRef.current?.currentTime || 0);
                 } catch(e) {}
             });
         }
@@ -293,6 +353,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const stopAudioInternal = () => {
         sourceNodesRef.current.forEach(s => { try { s.stop(); } catch {} }); sourceNodesRef.current.clear(); gainNodesRef.current.clear(); pannerNodesRef.current.clear(); trackAnalysersRef.current.clear();
         soundTouchNodesRef.current.forEach(st => { try { st.disconnect(); } catch {} }); soundTouchNodesRef.current.clear();
+        delayNodesRef.current.forEach(d => { try { d.disconnect(); } catch {} }); delayNodesRef.current.clear();
+        lastSeekTargetRef.current = null;
         isInCutRegionRef.current = false; setIsInCutRegion(false); setVideoOpacity(1);
         
         // Stop scheduled click oscillators and visual update timeouts
@@ -319,13 +381,41 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const busGain = audioContextRef.current!.createGain();
                 let outNode: AudioNode = busGain;
 
+                let delayNode: DelayNode | null = null;
+                if (audioContextRef.current) {
+                    try {
+                        delayNode = audioContextRef.current.createDelay(1.0);
+                        const latency = (pitchShift !== 0 || playbackRateRef.current !== 1) ? soundTouchLatencyRef.current : 0;
+                        let targetDelay = 0;
+                        if (isDrum && playbackRateRef.current === 1 && pitchShift !== 0) {
+                            targetDelay = latency;
+                        }
+                        delayNode.delayTime.setValueAtTime(targetDelay, audioContextRef.current.currentTime);
+                        delayNodesRef.current.set(key, delayNode);
+                    } catch (e) {
+                        console.error("Failed to create DelayNode", e);
+                    }
+                }
+
                 if (soundTouchNodeClassRef.current) {
                     const st = new soundTouchNodeClassRef.current(audioContextRef.current!);
                     st.playbackRate.value = playbackRateRef.current;
                     st.pitchSemitones.value = isDrum ? 0 : pitchShift;
                     soundTouchNodesRef.current.set(key, st);
                     busGain.connect(st);
-                    outNode = st;
+                    if (delayNode) {
+                        st.connect(delayNode);
+                        outNode = delayNode;
+                    } else {
+                        outNode = st;
+                    }
+                } else {
+                    if (delayNode) {
+                        busGain.connect(delayNode);
+                        outNode = delayNode;
+                    } else {
+                        outNode = busGain;
+                    }
                 }
 
                 if (targetChannel > 0 && targetChannel < maxCh) {
@@ -417,10 +507,26 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (videoRef.current) videoRef.current.currentTime = Math.max(0, targetTime + videoOffsetRef.current); 
         if (was) { 
             playAudio(targetTime, 0); 
-            startTimeRef.current = audioContextRef.current!.currentTime - (targetTime / playbackRateRef.current); 
-            if (videoRef.current && (targetTime + videoOffsetRef.current) >= 0) videoRef.current.play().catch(() => {}); 
+            const latency = (pitchShift !== 0 || playbackRateRef.current !== 1) ? soundTouchLatencyRef.current : 0;
+            startTimeRef.current = audioContextRef.current!.currentTime + latency - (targetTime / playbackRateRef.current); 
+            
+            lastSeekTargetRef.current = targetTime;
+            lastSeekTimeRef.current = audioContextRef.current!.currentTime;
+
+            if (videoRef.current && (targetTime + videoOffsetRef.current) >= 0) {
+                if (latency > 0) {
+                    const videoTimeoutId = setTimeout(() => {
+                        if (isPlayingRef.current) {
+                            videoRef.current?.play().catch(() => {});
+                        }
+                    }, (latency * 1000) / playbackRateRef.current);
+                    countInTimeoutsRef.current.push(videoTimeoutId);
+                } else {
+                    videoRef.current.play().catch(() => {});
+                }
+            }
         } 
-    }, [playAudio]);
+    }, [playAudio, pitchShift]);
 
     const togglePlay = useCallback(() => {
         if (isPlayingRef.current) { 
@@ -445,6 +551,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const currentBpm = (songAnalysisRef.current?.bpm || 120) * playbackRateRef.current;
             const beatDuration = 60 / currentBpm;
             const countInDuration = isCountInEnabledRef.current ? countInClicksRef.current * beatDuration : 0;
+            const latency = (pitchShift !== 0 || playbackRateRef.current !== 1) ? soundTouchLatencyRef.current : 0;
+            const totalDelay = countInDuration + latency;
             
             const ctx = audioContextRef.current;
             if (ctx && ctx.state === 'suspended') ctx.resume();
@@ -467,7 +575,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 
                 // Play metronome clicks
                 for (let i = 0; i < countInClicksRef.current; i++) {
-                    const clickTime = baseTime + i * beatDuration;
+                    const clickTime = baseTime + latency + i * beatDuration;
                     const isFirstBeat = (i === 0);
                     
                     const osc = ctx.createOscillator();
@@ -487,7 +595,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     osc.stop(clickTime + 0.1);
                     scheduledClicksRef.current.push(osc);
                     
-                    const delayMs = (i * beatDuration * 1000) / playbackRateRef.current;
+                    const delayMs = ((latency + i * beatDuration) * 1000) / playbackRateRef.current;
                     const timeoutId = setTimeout(() => {
                         setCurrentCountInBeat(i + 1);
                     }, delayMs);
@@ -497,14 +605,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 const endTimeoutId = setTimeout(() => {
                     setIsCountingIn(false);
                     setCurrentCountInBeat(0);
-                }, (countInDuration * 1000) / playbackRateRef.current);
+                }, (totalDelay * 1000) / playbackRateRef.current);
                 countInTimeoutsRef.current.push(endTimeoutId);
             } else {
                 videoSyncedAfterCountInRef.current = true;
             }
             
             playAudio(start, countInDuration, baseTime); 
-            startTimeRef.current = baseTime + countInDuration - (start / playbackRateRef.current);
+            startTimeRef.current = baseTime + countInDuration + latency - (start / playbackRateRef.current);
             
             if (videoRef.current) { 
                 const vPos = start + videoOffsetRef.current; 
@@ -512,12 +620,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     videoRef.current.currentTime = vPos; 
                     videoRef.current.playbackRate = playbackRateRef.current; 
                     
-                    if (countInDuration > 0) {
+                    if (totalDelay > 0) {
                         const videoTimeoutId = setTimeout(() => {
                             if (isPlayingRef.current) {
                                 videoRef.current?.play().catch(() => {});
                             }
-                        }, (countInDuration * 1000) / playbackRateRef.current);
+                        }, (totalDelay * 1000) / playbackRateRef.current);
                         countInTimeoutsRef.current.push(videoTimeoutId);
                     } else {
                         videoRef.current.play().catch(() => {});
@@ -528,7 +636,16 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setIsPlaying(true);
             let lastRenderTime = 0;
             const update = () => {
-                const now = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
+                const nowRaw = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
+                
+                let now = nowRaw;
+                if (lastSeekTargetRef.current !== null && audioContextRef.current) {
+                    if (audioContextRef.current.currentTime < lastSeekTimeRef.current + latency) {
+                        now = lastSeekTargetRef.current;
+                    } else {
+                        lastSeekTargetRef.current = null;
+                    }
+                }
                 const vNow = now + videoOffsetRef.current;
                 
                 // Do not update playhead during count-in
@@ -598,7 +715,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 animationFrameRef.current = requestAnimationFrame(update);
             }; animationFrameRef.current = requestAnimationFrame(update);
         }
-    }, [currentTime, playAudio, seek, stop]);
+    }, [currentTime, playAudio, seek, stop, pitchShift]);
 
     const setTrackVolume = (id: string, volume: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, volume } : t));
     const setTrackPan = (id: string, pan: number) => setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t));

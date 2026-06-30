@@ -30,6 +30,14 @@ export const SongList: React.FC = () => {
     const presetInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = React.useState(false);
     const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
+    const [localPlaylist, setLocalPlaylist] = React.useState<Song[]>(playlist);
+
+    // Sync local playlist with global playlist when global changes and we are not dragging
+    React.useEffect(() => {
+        if (draggedIndex === null) {
+            setLocalPlaylist(playlist);
+        }
+    }, [playlist, draggedIndex]);
 
 
     // Updated input handlers
@@ -208,21 +216,22 @@ export const SongList: React.FC = () => {
         if (draggedIndex === null || draggedIndex === index) return;
         dragOccurredRef.current = true;
         
-        setPlaylist(prev => {
+        setLocalPlaylist(prev => {
             const next = [...prev];
             const [draggedItem] = next.splice(draggedIndex, 1);
             next.splice(index, 0, draggedItem);
             return next;
         });
         setDraggedIndex(index);
-    }, [draggedIndex, setPlaylist]);
+    }, [draggedIndex]);
 
     const handleDragEnd = useCallback(() => {
+        setPlaylist(localPlaylist);
         setDraggedIndex(null);
         setTimeout(() => {
             dragOccurredRef.current = false;
         }, 100);
-    }, []);
+    }, [localPlaylist, setPlaylist]);
 
 
     return (
@@ -267,7 +276,7 @@ export const SongList: React.FC = () => {
                         onClick={exportPreset}
                         className="p-1 rounded bg-gray-700 hover:bg-gray-600 text-blue-400 transition-colors"
                         title="Guardar Preset (.json)"
-                        disabled={playlist.length === 0}
+                        disabled={localPlaylist.length === 0}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
                             <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -316,7 +325,7 @@ export const SongList: React.FC = () => {
             )}
 
             {/* Error Banner for Missing Tracks */}
-            {playlist.some(s => s.isPlaceholder) && !isUploading && (
+            {localPlaylist.some(s => s.isPlaceholder) && !isUploading && (
                 <div className="bg-orange-900/60 border-b border-orange-700/50 p-2 flex flex-col sm:flex-row items-center justify-between gap-2 shrink-0">
                     <div className="flex items-center gap-2 text-orange-300 text-[10px] sm:text-xs">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 shrink-0">
@@ -335,7 +344,7 @@ export const SongList: React.FC = () => {
 
             {/* Song list */}
             <div className="flex-1 overflow-y-auto">
-                {playlist.length === 0 ? (
+                {localPlaylist.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-gray-600 px-4">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-8 h-8 mb-2 text-gray-700">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
@@ -343,7 +352,7 @@ export const SongList: React.FC = () => {
                         <p className="text-[11px] text-center">Carga un ZIP con stems para agregar canciones al playlist</p>
                     </div>
                 ) : (
-                    playlist.map((song, index) => (
+                    localPlaylist.map((song, index) => (
                         <div
                             key={song.id}
                             draggable={!isUploading}
