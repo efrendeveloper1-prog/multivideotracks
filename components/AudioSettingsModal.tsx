@@ -7,7 +7,9 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
         audioOutputDeviceId,
         setAudioOutputDevice,
         audioOutputMaxChannels,
-        setTrackOutputChannel
+        setTrackOutputChannel,
+        countInOutputChannel,
+        setCountInOutputChannel
     } = useAudioEngine();
 
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -109,13 +111,33 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
                     <div>
                         <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">Enrutamiento por Pista</h3>
                         
-                        {sortedTracks.length === 0 ? (
-                            <div className="p-8 text-center text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700/50 border-dashed">
-                                No hay pistas cargadas. Carga un multitrack para configurar sus rutas.
+                        <div className="space-y-2">
+                            {/* Metronome Track (always present) */}
+                            <div className="flex items-center justify-between p-3 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-lg transition-colors">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                    <span className="font-medium text-gray-200">Cuenta Inicial (Metrónomo)</span>
+                                </div>
+                                <select
+                                    className="bg-gray-900 border border-gray-600 text-gray-300 px-3 py-1.5 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                                    value={countInOutputChannel}
+                                    onChange={(e) => setCountInOutputChannel(parseInt(e.target.value))}
+                                >
+                                    {channelPairs.map(ch => (
+                                        <option key={ch} value={ch}>
+                                            Salida {ch + 1}-{ch + 2} {ch === 0 ? '(Principal)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
-                        ) : (
-                            <div className="space-y-2">
-                                {sortedTracks.map(track => {
+
+                            {/* Song Tracks */}
+                            {sortedTracks.length === 0 ? (
+                                <div className="p-4 text-center text-gray-500 bg-gray-800/10 rounded-lg border border-gray-800 border-dashed text-sm">
+                                    No hay pistas cargadas. Carga un multitrack para configurar sus rutas.
+                                </div>
+                            ) : (
+                                sortedTracks.map(track => {
                                     const outCh = track.outputChannel || 0;
                                     return (
                                         <div key={track.id} className="flex items-center justify-between p-3 bg-gray-800/50 hover:bg-gray-800 border border-gray-700/50 rounded-lg transition-colors">
@@ -136,9 +158,9 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
                                             </select>
                                         </div>
                                     );
-                                })}
-                            </div>
-                        )}
+                                })
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

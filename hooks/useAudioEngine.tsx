@@ -38,6 +38,7 @@ interface AudioEngineContextType {
     isCountInEnabled: boolean; setIsCountInEnabled: (val: boolean) => void;
     countInClicks: number; setCountInClicks: (val: number) => void;
     isCountingIn: boolean; currentCountInBeat: number;
+    countInOutputChannel: number; setCountInOutputChannel: (val: number) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -138,9 +139,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [countInClicks, setCountInClicks] = useState<number>(4);
     const [isCountingIn, setIsCountingIn] = useState<boolean>(false);
     const [currentCountInBeat, setCurrentCountInBeat] = useState<number>(0);
+    const [countInOutputChannel, setCountInOutputChannel] = useState<number>(0);
 
     const isCountInEnabledRef = useRef<boolean>(false);
     const countInClicksRef = useRef<number>(4);
+    const countInOutputChannelRef = useRef<number>(0);
 
     // Load count-in settings on mount
     useEffect(() => {
@@ -155,6 +158,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const clicks = parseInt(savedClicks);
             setCountInClicks(clicks);
             countInClicksRef.current = clicks;
+        }
+        const savedChannel = localStorage.getItem('multitrack_count_in_output_channel');
+        if (savedChannel !== null) {
+            const chan = parseInt(savedChannel);
+            setCountInOutputChannel(chan);
+            countInOutputChannelRef.current = chan;
         }
     }, []);
 
@@ -172,6 +181,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             const next = typeof val === 'function' ? val(prev) : val;
             countInClicksRef.current = next;
             localStorage.setItem('multitrack_count_in_clicks', String(next));
+            return next;
+        });
+    }, []);
+
+    const handleSetCountInOutputChannel = useCallback((val: number | ((prev: number) => number)) => {
+        setCountInOutputChannel(prev => {
+            const next = typeof val === 'function' ? val(prev) : val;
+            countInOutputChannelRef.current = next;
+            localStorage.setItem('multitrack_count_in_output_channel', String(next));
             return next;
         });
     }, []);
@@ -581,10 +599,26 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
                     osc.connect(gain);
-                    if (masterGainRef.current) {
-                        gain.connect(masterGainRef.current);
+                    const targetChannel = countInOutputChannelRef.current;
+                    const maxCh = ctx.destination.maxChannelCount;
+                    if (targetChannel > 0 && targetChannel < maxCh) {
+                        const merger = ctx.createChannelMerger(Math.max(2, maxCh));
+                        merger.connect(ctx.destination);
+                        
+                        const splitter = ctx.createChannelSplitter(2);
+                        gain.connect(splitter);
+                        splitter.connect(merger, 0, targetChannel);
+                        if (targetChannel + 1 < maxCh) {
+                            splitter.connect(merger, 1, targetChannel + 1);
+                        } else {
+                            splitter.connect(merger, 1, targetChannel);
+                        }
                     } else {
-                        gain.connect(ctx.destination);
+                        if (masterGainRef.current) {
+                            gain.connect(masterGainRef.current);
+                        } else {
+                            gain.connect(ctx.destination);
+                        }
                     }
                     
                     osc.frequency.setValueAtTime(isFirstBeat ? 1200 : 800, clickTime);
@@ -815,12 +849,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 };
             }), 
             panelSizes,
-            audioOutputDeviceId,
+                    audioOutputDeviceId,
             audioOutputMaxChannels,
             showLyrics,
             invertBackground,
             isCountInEnabled,
-            countInClicks
+            countInClicks,
+            countInOutputChannel
         };
 
         if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
@@ -853,7 +888,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         a.download = defaultName; 
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks]);
+    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks, countInOutputChannel]);
 
     const importPreset = useCallback(async (file: File) => {
         try { 
@@ -930,8 +965,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (p.invertBackground !== undefined) setInvertBackground(p.invertBackground);
             if (p.isCountInEnabled !== undefined) setIsCountInEnabled(p.isCountInEnabled);
             if (p.countInClicks !== undefined) setCountInClicks(p.countInClicks);
+            if (p.countInOutputChannel !== undefined) setCountInOutputChannel(p.countInOutputChannel);
         } catch { alert("Error al importar."); }
-    }, [loadPreparedSong]);
+    }, [loadPreparedSong, setCountInOutputChannel]);
 
     const loadSong = async (id: string) => {
         if (id === activeSongIdRef.current) return;
@@ -1288,7 +1324,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             customChords, setCustomChords, addChordBlock: (b) => setCustomChords(p => [...p, {...b, id: crypto.randomUUID()}]), updateChordBlock: (id, u) => setCustomChords(p => p.map(c => c.id === id ? {...c, ...u} : c)), removeChordBlock: (id) => setCustomChords(p => p.filter(c => c.id !== id)), clearChords: () => setCustomChords([]),
             audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel,
             isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData,
-            isCountInEnabled, setIsCountInEnabled: handleSetIsCountInEnabled, countInClicks, setCountInClicks: handleSetCountInClicks, isCountingIn, currentCountInBeat
+            isCountInEnabled, setIsCountInEnabled: handleSetIsCountInEnabled, countInClicks, setCountInClicks: handleSetCountInClicks, isCountingIn, currentCountInBeat,
+            countInOutputChannel, setCountInOutputChannel: handleSetCountInOutputChannel
         }}>
             {children}
         </AudioEngineContext.Provider>
