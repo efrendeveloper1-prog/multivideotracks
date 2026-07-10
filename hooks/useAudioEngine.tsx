@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
 import { analyzeAudio, AudioAnalysis } from '@/utils/audioAnalysis';
+import { performExportMixToMp3 } from '@/utils/exportMix';
+
 
 // Types
 export interface CutRegion { start: number; end: number; }
@@ -39,6 +41,10 @@ interface AudioEngineContextType {
     countInClicks: number; setCountInClicks: (val: number) => void;
     isCountingIn: boolean; currentCountInBeat: number;
     countInOutputChannel: number; setCountInOutputChannel: (val: number) => void;
+    isExporting: boolean;
+    exportProgress: number;
+    exportStatus: string;
+    exportMixToMp3: () => Promise<void>;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -140,6 +146,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isCountingIn, setIsCountingIn] = useState<boolean>(false);
     const [currentCountInBeat, setCurrentCountInBeat] = useState<number>(0);
     const [countInOutputChannel, setCountInOutputChannel] = useState<number>(0);
+
+    const [isExporting, setIsExporting] = useState<boolean>(false);
+    const [exportProgress, setExportProgress] = useState<number>(0);
+    const [exportStatus, setExportStatus] = useState<string>('');
 
     const isCountInEnabledRef = useRef<boolean>(false);
     const countInClicksRef = useRef<number>(4);
@@ -1229,6 +1239,30 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, []);
 
+    const exportMixToMp3 = useCallback(async () => {
+        if (!audioContextRef.current) return;
+        await performExportMixToMp3({
+            activeSongId: activeSongIdRef.current,
+            playlist,
+            tracks: tracksRef.current,
+            duration: durationRef.current,
+            cutRegions: cutRegionsRef.current,
+            masterVolume,
+            isCountInEnabled,
+            countInClicks,
+            songAnalysis: songAnalysisRef.current,
+            videoOffset: videoOffsetRef.current,
+            videoEndTime: videoEndTimeRef.current,
+            videoDuration: videoDurationRef.current,
+            videoFadeIn: videoFadeInRef.current,
+            videoFadeOut: videoFadeOutRef.current,
+            audioContext: audioContextRef.current,
+            setExportStatus,
+            setExportProgress,
+            setIsExporting
+        });
+    }, [playlist, masterVolume, isCountInEnabled, countInClicks]);
+
     const startRecording = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1325,7 +1359,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             audioOutputDeviceId, audioOutputMaxChannels, setAudioOutputDevice, setTrackOutputChannel,
             isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData,
             isCountInEnabled, setIsCountInEnabled: handleSetIsCountInEnabled, countInClicks, setCountInClicks: handleSetCountInClicks, isCountingIn, currentCountInBeat,
-            countInOutputChannel, setCountInOutputChannel: handleSetCountInOutputChannel
+            countInOutputChannel, setCountInOutputChannel: handleSetCountInOutputChannel,
+            isExporting, exportProgress, exportStatus, exportMixToMp3
         }}>
             {children}
         </AudioEngineContext.Provider>

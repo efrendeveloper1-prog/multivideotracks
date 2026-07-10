@@ -27,7 +27,9 @@ export const TransportControls: React.FC = () => {
         setPlaybackRate,
         isRecording,
         startRecording,
-        stopRecording
+        stopRecording,
+        tracks,
+        exportMixToMp3
     } = useAudioEngine();
 
     // Setup Spacebar keyboard shortcut for Play/Pause
@@ -199,6 +201,23 @@ export const TransportControls: React.FC = () => {
                     title="Grabar Audio (Micrófono)"
                 >
                     <div className={`w-4 h-4 sm:w-6 sm:h-6 rounded-full transition-colors duration-300 ${isRecording ? 'bg-white' : 'bg-red-500'}`}></div>
+                </button>
+
+                {/* Export Mix Button */}
+                <button
+                    onClick={exportMixToMp3}
+                    disabled={!activeSongId || tracks.length === 0}
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors
+                        ${(activeSongId && tracks.length > 0) 
+                            ? 'bg-gray-700 hover:bg-gray-600 active:bg-gray-800 text-white' 
+                            : 'bg-gray-800 opacity-50 cursor-not-allowed text-gray-500'}`}
+                    title="Exportar Mezcla a MP3"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-download">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" x2="12" y1="15" y2="3"/>
+                    </svg>
                 </button>
 
                 {/* Next Button */}
