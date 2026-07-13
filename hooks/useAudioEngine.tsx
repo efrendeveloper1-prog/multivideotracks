@@ -1259,9 +1259,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             audioContext: audioContextRef.current,
             setExportStatus,
             setExportProgress,
-            setIsExporting
+            setIsExporting,
+            pitchShift,
+            playbackRate
         });
-    }, [playlist, masterVolume, isCountInEnabled, countInClicks]);
+    }, [playlist, masterVolume, isCountInEnabled, countInClicks, pitchShift, playbackRate]);
 
     const startRecording = useCallback(async () => {
         try {

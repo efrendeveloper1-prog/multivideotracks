@@ -20,6 +20,8 @@ interface ExportParams {
     setExportStatus: (status: string) => void;
     setExportProgress: (progress: number) => void;
     setIsExporting: (exporting: boolean) => void;
+    pitchShift: number;
+    playbackRate: number;
 }
 
 const loadLamejs = (): Promise<any> => {
@@ -58,6 +60,45 @@ const loadLamejs = (): Promise<any> => {
     });
 };
 
+const getSoundTouchLatency = (sampleRate: number): number => {
+    const tempo = 1;
+    const overlapMs = 8;
+    
+    const AUTOSEQ_C = 130;
+    const AUTOSEQ_K = -20;
+    const AUTOSEQ_AT_MIN = 125;
+    const AUTOSEQ_AT_MAX = 50;
+    
+    let seq = AUTOSEQ_C + AUTOSEQ_K * tempo;
+    seq = seq < AUTOSEQ_AT_MAX ? AUTOSEQ_AT_MAX : (seq > AUTOSEQ_AT_MIN ? AUTOSEQ_AT_MIN : seq);
+    const sequenceMs = Math.floor(seq + 0.5);
+    
+    const AUTOSEEK_C = 25.66666667;
+    const AUTOSEEK_K = -2.666666667;
+    const AUTOSEEK_AT_MIN = 25;
+    const AUTOSEEK_AT_MAX = 15;
+    
+    let seek = AUTOSEEK_C + AUTOSEEK_K * tempo;
+    seek = seek < AUTOSEEK_AT_MAX ? AUTOSEEK_AT_MAX : (seek > AUTOSEEK_AT_MIN ? AUTOSEEK_AT_MIN : seek);
+    const seekWindowMs = Math.floor(seek + 0.5);
+    
+    const seekWindowLength = Math.floor(sampleRate * sequenceMs / 1000);
+    const seekLength = Math.floor(sampleRate * seekWindowMs / 1000);
+    
+    let overlapLength = sampleRate * overlapMs / 1000;
+    overlapLength = overlapLength < 16 ? 16 : overlapLength;
+    overlapLength -= overlapLength % 8;
+    
+    const nominalSkip = tempo * (seekWindowLength - overlapLength);
+    const intskip = Math.floor(nominalSkip + 0.5);
+    const sampleReq = Math.max(intskip + overlapLength, seekWindowLength) + seekLength;
+    
+    const N = overlapLength + sampleReq;
+    const K = Math.ceil(N / 128);
+    const latencySamples = (K - 1) * 128;
+    return latencySamples / sampleRate;
+};
+
 export async function performExportMixToMp3(params: ExportParams) {
     const {
         activeSongId,
@@ -77,7 +118,9 @@ export async function performExportMixToMp3(params: ExportParams) {
         audioContext,
         setExportStatus,
         setExportProgress,
-        setIsExporting
+        setIsExporting,
+        pitchShift,
+        playbackRate
     } = params;
 
     if (!activeSongId || tracks.length === 0) return;
@@ -112,7 +155,8 @@ export async function performExportMixToMp3(params: ExportParams) {
         }
 
         const baseBpm = songAnalysis?.bpm || 120;
-        const beatDuration = 60 / baseBpm;
+        const currentBpm = baseBpm * playbackRate;
+        const beatDuration = 60 / currentBpm;
         const countInDuration = isCountInEnabled ? countInClicks * beatDuration : 0;
 
         const uncutRegions: { start: number; end: number; outputStart: number }[] = [];
@@ -126,7 +170,7 @@ export async function performExportMixToMp3(params: ExportParams) {
                     end: cut.start,
                     outputStart: currentOutputTime
                 });
-                currentOutputTime += (cut.start - lastEnd);
+                currentOutputTime += (cut.start - lastEnd) / playbackRate;
             }
             lastEnd = cut.end;
         }
@@ -137,7 +181,7 @@ export async function performExportMixToMp3(params: ExportParams) {
                 end: duration,
                 outputStart: currentOutputTime
             });
-            currentOutputTime += (duration - lastEnd);
+            currentOutputTime += (duration - lastEnd) / playbackRate;
         }
 
         const totalRenderDuration = currentOutputTime;
@@ -148,10 +192,21 @@ export async function performExportMixToMp3(params: ExportParams) {
 
         setExportStatus('Renderizando mezcla...');
         const sampleRate = audioContext.sampleRate || 44100;
-        const mixLength = Math.ceil(totalRenderDuration * sampleRate);
+
+        const useSoundTouch = (pitchShift !== 0 || playbackRate !== 1);
+        const latency = useSoundTouch ? getSoundTouchLatency(sampleRate) : 0;
+        const mixLength = Math.ceil((totalRenderDuration + latency) * sampleRate);
 
         const OfflineCtx = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
         const offlineCtx = new OfflineCtx(2, mixLength, sampleRate);
+
+        let SoundTouchNode: any = null;
+        if (useSoundTouch) {
+            setExportStatus('Inicializando procesador de tono/tempo...');
+            const mod = await import('@soundtouchjs/audio-worklet');
+            SoundTouchNode = mod.SoundTouchNode;
+            await SoundTouchNode.register(offlineCtx, '/soundtouch-processor.js?v=2');
+        }
 
         const masterGain = offlineCtx.createGain();
         masterGain.gain.setValueAtTime(masterVolume, 0);
@@ -160,7 +215,7 @@ export async function performExportMixToMp3(params: ExportParams) {
         // 1. Schedule metronome clicks
         if (isCountInEnabled) {
             for (let i = 0; i < countInClicks; i++) {
-                const clickTime = i * beatDuration;
+                const clickTime = latency + i * beatDuration;
                 const isFirstBeat = (i === 0);
 
                 const osc = offlineCtx.createOscillator();
@@ -188,7 +243,34 @@ export async function performExportMixToMp3(params: ExportParams) {
             pannerNode.pan.value = t.pan || 0;
 
             gainNode.connect(pannerNode);
-            pannerNode.connect(masterGain);
+
+            const isDrum = !!t.name.toLowerCase().match(/drum|bateria|perc|click|guia|cue|guide/);
+
+            if (useSoundTouch && SoundTouchNode) {
+                const stNode = new SoundTouchNode(offlineCtx);
+                stNode.playbackRate.value = playbackRate;
+                stNode.pitchSemitones.value = isDrum ? 0 : pitchShift;
+
+                let delayNode: DelayNode | null = null;
+                let targetDelay = 0;
+                if (isDrum && playbackRate === 1 && pitchShift !== 0) {
+                    targetDelay = latency;
+                }
+                if (targetDelay > 0) {
+                    delayNode = offlineCtx.createDelay(1.0);
+                    delayNode.delayTime.setValueAtTime(targetDelay, 0);
+                }
+
+                pannerNode.connect(stNode);
+                if (delayNode) {
+                    stNode.connect(delayNode);
+                    delayNode.connect(masterGain);
+                } else {
+                    stNode.connect(masterGain);
+                }
+            } else {
+                pannerNode.connect(masterGain);
+            }
 
             if (t.isVideoAudio) {
                 const vStart = Math.max(0, -videoOffset);
@@ -228,7 +310,7 @@ export async function performExportMixToMp3(params: ExportParams) {
                     }
 
                     for (const p of uniquePoints) {
-                        const outTime = region.outputStart + (p - region.start);
+                        const outTime = region.outputStart + (p - region.start) / playbackRate;
                         const factor = getVideoVolumeFactor(p);
                         gainValues.push({ time: outTime, value: activeVolume * factor });
                     }
@@ -266,7 +348,7 @@ export async function performExportMixToMp3(params: ExportParams) {
                     } else {
                         const delay = Math.abs(sum);
                         if (delay < dur) {
-                            when = region.outputStart + delay;
+                            when = region.outputStart + delay / playbackRate;
                             offset = 0;
                             dur = dur - delay;
                         } else {
@@ -277,7 +359,7 @@ export async function performExportMixToMp3(params: ExportParams) {
 
                 const segmentSrc = offlineCtx.createBufferSource();
                 segmentSrc.buffer = t.buffer;
-                segmentSrc.playbackRate.value = 1.0;
+                segmentSrc.playbackRate.value = playbackRate;
                 segmentSrc.connect(gainNode);
                 segmentSrc.start(when, offset, dur);
             }
