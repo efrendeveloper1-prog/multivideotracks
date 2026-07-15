@@ -41,6 +41,7 @@ interface AudioEngineContextType {
     countInClicks: number; setCountInClicks: (val: number) => void;
     isCountingIn: boolean; currentCountInBeat: number;
     countInOutputChannel: number; setCountInOutputChannel: (val: number) => void;
+    recordingLatency: number; setRecordingLatency: (val: number | ((prev: number) => number)) => void;
     isExporting: boolean;
     exportProgress: number;
     exportStatus: string;
@@ -106,6 +107,58 @@ const getSoundTouchLatency = (sampleRate: number): number => {
     return latencySamples / sampleRate;
 };
 
+const writeString = (view: DataView, offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+    }
+};
+
+const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+    const numOfChan = buffer.numberOfChannels;
+    const length = buffer.length * numOfChan * 2 + 44;
+    const bufferArray = new ArrayBuffer(length);
+    const view = new DataView(bufferArray);
+    const channels = [];
+    let i;
+    let sample;
+    let offset = 0;
+    let pos = 0;
+
+    // write WAVE header
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, length - 8, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numOfChan, true);
+    view.setUint32(24, buffer.sampleRate, true);
+    view.setUint32(28, buffer.sampleRate * numOfChan * 2, true);
+    view.setUint16(32, numOfChan * 2, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, length - 44, true);
+
+    // write interleaved data
+    for (i = 0; i < buffer.numberOfChannels; i++) {
+        channels.push(buffer.getChannelData(i));
+    }
+
+    pos = 44;
+    while (pos < length) {
+        for (i = 0; i < numOfChan; i++) {
+            sample = Math.max(-1, Math.min(1, channels[i][offset]));
+            sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(pos, sample, true);
+            pos += 2;
+        }
+        offset++;
+    }
+
+    return new Blob([bufferArray], { type: 'audio/wav' });
+};
+
+
 
 export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [tracks, setTracks] = useState<Track[]>([]);
@@ -140,6 +193,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [audioOutputDeviceId, setAudioOutputDeviceId] = useState<string>('default');
     const [audioOutputMaxChannels, setAudioOutputMaxChannels] = useState<number>(2);
     const [isRecording, setIsRecording] = useState<boolean>(false);
+    const [recordingLatency, setRecordingLatency] = useState<number>(120);
+    const recordingLatencyRef = useRef<number>(120);
 
     const [isCountInEnabled, setIsCountInEnabled] = useState<boolean>(false);
     const [countInClicks, setCountInClicks] = useState<number>(4);
@@ -175,6 +230,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setCountInOutputChannel(chan);
             countInOutputChannelRef.current = chan;
         }
+        const savedLatency = localStorage.getItem('multitrack_recording_latency');
+        if (savedLatency !== null) {
+            const latency = parseInt(savedLatency);
+            setRecordingLatency(latency);
+            recordingLatencyRef.current = latency;
+        }
     }, []);
 
     const handleSetIsCountInEnabled = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
@@ -203,6 +264,20 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             return next;
         });
     }, []);
+
+    const handleSetRecordingLatency = useCallback((val: number | ((prev: number) => number)) => {
+        setRecordingLatency(prev => {
+            const next = typeof val === 'function' ? val(prev) : val;
+            recordingLatencyRef.current = next;
+            localStorage.setItem('multitrack_recording_latency', String(next));
+            return next;
+        });
+    }, []);
+
+    const recStartCtxTimeRef = useRef<number>(0);
+    const recStartTimeRefValueRef = useRef<number>(0);
+    const recPlaybackRateRef = useRef<number>(1);
+    const stopRecordingRef = useRef<() => void>(() => {});
 
     const scheduledClicksRef = useRef<OscillatorNode[]>([]);
     const countInTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
@@ -506,6 +581,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const stop = useCallback(() => { 
         stopAudioInternal(); 
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            stopRecordingRef.current();
+        }
         videoRef.current?.pause(); 
         if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoOffsetRef.current); 
         pauseTimeRef.current = 0; 
@@ -565,6 +643,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             setIsPlaying(false); 
             setIsCountingIn(false);
             setCurrentCountInBeat(0);
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                stopRecordingRef.current();
+            }
         }
         else {
             let start = pauseTimeRef.current >= durationRef.current ? 0 : pauseTimeRef.current;
@@ -859,13 +940,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 };
             }), 
             panelSizes,
-                    audioOutputDeviceId,
+            audioOutputDeviceId,
             audioOutputMaxChannels,
             showLyrics,
             invertBackground,
             isCountInEnabled,
             countInClicks,
-            countInOutputChannel
+            countInOutputChannel,
+            recordingLatency
         };
 
         if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
@@ -898,7 +980,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         a.download = defaultName; 
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks, countInOutputChannel]);
+    }, [activeSongId, playlist, panelSizes, audioOutputDeviceId, audioOutputMaxChannels, showLyrics, invertBackground, isCountInEnabled, countInClicks, countInOutputChannel, recordingLatency]);
 
     const importPreset = useCallback(async (file: File) => {
         try { 
@@ -976,8 +1058,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (p.isCountInEnabled !== undefined) setIsCountInEnabled(p.isCountInEnabled);
             if (p.countInClicks !== undefined) setCountInClicks(p.countInClicks);
             if (p.countInOutputChannel !== undefined) setCountInOutputChannel(p.countInOutputChannel);
+            if (p.recordingLatency !== undefined) setRecordingLatency(p.recordingLatency);
         } catch { alert("Error al importar."); }
-    }, [loadPreparedSong, setCountInOutputChannel]);
+    }, [loadPreparedSong, setCountInOutputChannel, handleSetRecordingLatency]);
 
     const loadSong = async (id: string) => {
         if (id === activeSongIdRef.current) return;
@@ -1285,9 +1368,79 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
             mediaRecorder.onstop = async () => {
                 const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
-                const file = new File([blob], `VOZ GRABADA - ${new Date().toISOString().replace(/:/g, '-')}.webm`, { type: 'audio/webm' });
-                await addTrack(file, "VOZ GRABADA");
-                stream.getTracks().forEach(t => t.stop());
+                
+                if (!audioContextRef.current) {
+                    const file = new File([blob], `VOZ GRABADA - ${new Date().toISOString().replace(/:/g, '-')}.webm`, { type: 'audio/webm' });
+                    await addTrack(file, "VOZ GRABADA");
+                    stream.getTracks().forEach(t => t.stop());
+                    return;
+                }
+                
+                try {
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const originalBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+                    
+                    const recStartCtxTime = recStartCtxTimeRef.current;
+                    const recStartTimeRefValue = recStartTimeRefValueRef.current;
+                    const recPlaybackRate = recPlaybackRateRef.current;
+                    const latencyCompSec = recordingLatencyRef.current / 1000;
+                    
+                    const recTimelineStart = (recStartCtxTime - recStartTimeRefValue) * recPlaybackRate;
+                    const targetStartTime = recTimelineStart - latencyCompSec;
+                    
+                    const sampleRate = originalBuffer.sampleRate;
+                    const startOffsetSamples = Math.round(targetStartTime * sampleRate);
+                    
+                    let finalBuffer: AudioBuffer;
+                    
+                    if (startOffsetSamples > 0) {
+                        const newLength = originalBuffer.length + startOffsetSamples;
+                        finalBuffer = audioContextRef.current.createBuffer(
+                            originalBuffer.numberOfChannels,
+                            newLength,
+                            sampleRate
+                        );
+                        for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
+                            const originalData = originalBuffer.getChannelData(channel);
+                            const finalData = finalBuffer.getChannelData(channel);
+                            finalData.set(originalData, startOffsetSamples);
+                        }
+                    } else if (startOffsetSamples < 0) {
+                        const cropSamples = -startOffsetSamples;
+                        if (cropSamples >= originalBuffer.length) {
+                            finalBuffer = audioContextRef.current.createBuffer(
+                                originalBuffer.numberOfChannels,
+                                1,
+                                sampleRate
+                            );
+                        } else {
+                            const newLength = originalBuffer.length - cropSamples;
+                            finalBuffer = audioContextRef.current.createBuffer(
+                                originalBuffer.numberOfChannels,
+                                newLength,
+                                sampleRate
+                            );
+                            for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
+                                const originalData = originalBuffer.getChannelData(channel);
+                                const finalData = finalBuffer.getChannelData(channel);
+                                finalData.set(originalData.subarray(cropSamples), 0);
+                            }
+                        }
+                    } else {
+                        finalBuffer = originalBuffer;
+                    }
+                    
+                    const wavBlob = audioBufferToWav(finalBuffer);
+                    const file = new File([wavBlob], `VOZ GRABADA - ${new Date().toISOString().replace(/:/g, '-')}.wav`, { type: 'audio/wav' });
+                    
+                    await addTrack(file, "VOZ GRABADA");
+                } catch (e) {
+                    console.error("Error processing/aligning recorded audio:", e);
+                    const file = new File([blob], `VOZ GRABADA - ${new Date().toISOString().replace(/:/g, '-')}.webm`, { type: 'audio/webm' });
+                    await addTrack(file, "VOZ GRABADA");
+                } finally {
+                    stream.getTracks().forEach(t => t.stop());
+                }
             };
 
             mediaRecorder.start();
@@ -1296,6 +1449,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (!isPlayingRef.current) {
                 togglePlay();
             }
+            
+            recStartCtxTimeRef.current = audioContextRef.current ? audioContextRef.current.currentTime : 0;
+            recStartTimeRefValueRef.current = startTimeRef.current;
+            recPlaybackRateRef.current = playbackRateRef.current;
         } catch (e) {
             console.error("Error starting recording:", e);
             alert("No se pudo acceder al micrófono.");
@@ -1309,6 +1466,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsRecording(false);
         recordingAnalyserRef.current = null;
     }, []);
+
+    useEffect(() => {
+        stopRecordingRef.current = stopRecording;
+    }, [stopRecording]);
 
     const getRecordingTimeDomainData = useCallback((dataArray: Float32Array) => {
         if (recordingAnalyserRef.current) {
@@ -1362,6 +1523,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             isRecording, startRecording, stopRecording, downloadTrack, getRecordingTimeDomainData,
             isCountInEnabled, setIsCountInEnabled: handleSetIsCountInEnabled, countInClicks, setCountInClicks: handleSetCountInClicks, isCountingIn, currentCountInBeat,
             countInOutputChannel, setCountInOutputChannel: handleSetCountInOutputChannel,
+            recordingLatency, setRecordingLatency: handleSetRecordingLatency,
             isExporting, exportProgress, exportStatus, exportMixToMp3
         }}>
             {children}

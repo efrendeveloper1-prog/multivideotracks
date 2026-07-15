@@ -9,7 +9,9 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
         audioOutputMaxChannels,
         setTrackOutputChannel,
         countInOutputChannel,
-        setCountInOutputChannel
+        setCountInOutputChannel,
+        recordingLatency,
+        setRecordingLatency
     } = useAudioEngine();
 
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -104,6 +106,28 @@ export const AudioSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
                                     <strong>Nota:</strong> Tu navegador o dispositivo actual solo reporta 2 canales. Para enrutamiento avanzado, asegúrate de haber seleccionado una interfaz USB multicanal compatible.
                                 </div>
                             )}
+                        </div>
+                    </div>
+
+                    {/* Latencia de Grabación */}
+                    <div className="mb-8">
+                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">Compensación de Latencia de Grabación</h3>
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-4 bg-gray-800/40 p-4 rounded-lg border border-gray-700/50">
+                                <input 
+                                    type="range"
+                                    min="0"
+                                    max="500"
+                                    step="5"
+                                    className="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                    value={recordingLatency}
+                                    onChange={(e) => setRecordingLatency(parseInt(e.target.value))}
+                                />
+                                <span className="font-mono text-sm w-16 text-right font-bold text-blue-400">{recordingLatency} ms</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Ajusta este valor si tu voz grabada suena desfasada respecto a la música. Un valor de 100-200 ms es común para compensar el retardo de auriculares o micrófonos en el navegador.
+                            </p>
                         </div>
                     </div>
 
