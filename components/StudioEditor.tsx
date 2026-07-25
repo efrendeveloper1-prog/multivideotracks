@@ -40,7 +40,7 @@ const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDouble
 
 const EditorContent: React.FC = () => {
     const {
-        setVideoElement, tracks, currentTime, duration, seek, lyrics, lyricsSettings,
+        setVideoElement, tracks, currentTime, duration, setDuration, seek, lyrics, lyricsSettings,
         videoDuration, trimVideoToAudio, videoOffset, setVideoOffset,
         videoEndTime, setVideoEndTime,
         videoFadeIn, setVideoFadeIn,
@@ -127,6 +127,16 @@ const EditorContent: React.FC = () => {
     const [draggingSection, setDraggingSection] = useState<{ id: string, startX: number, initialStart: number, initialEnd: number, type: 'move' | 'resize-left' | 'resize-right' } | null>(null);
     const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
+    const [hoveredFadeHandle, setHoveredFadeHandle] = useState<'in' | 'out' | null>(null);
+
+    const formatVegasTime = (sec: number) => {
+        const s = Math.max(0, sec);
+        const hrs = Math.floor(s / 3600);
+        const mins = Math.floor((s % 3600) / 60);
+        const secs = Math.floor(s % 60);
+        const frames = Math.floor((s % 1) * 30);
+        return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')};${frames.toString().padStart(2, '0')}`;
+    };
     const timelineRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [zoomLevel, setZoomLevel] = useState(1);
@@ -521,15 +531,19 @@ const EditorContent: React.FC = () => {
         if (resizingVideo === null) return;
 
         const handleMouseMove = (e: MouseEvent) => {
-            if (!timelineRef.current || duration <= 0) return;
+            if (!timelineRef.current) return;
             const rect = timelineRef.current.getBoundingClientRect();
+            const baseDuration = duration > 0 ? duration : (videoDuration > 0 ? videoDuration : 60);
             const deltaX = e.clientX - resizingVideo.startX;
-            const deltaTime = (deltaX / rect.width) * duration;
+            const deltaTime = (deltaX / rect.width) * baseDuration;
             
             let newEndTime = resizingVideo.initialEndTime + deltaTime;
-            // Constrain: at least 0.1s long (taking offset into account if needed, but let's keep it simple)
             const minEndTime = Math.max(0.1, -videoOffset + 0.1);
-            newEndTime = Math.max(minEndTime, Math.min(newEndTime, duration));
+            newEndTime = Math.max(minEndTime, newEndTime);
+            
+            if (duration > 0 && newEndTime > duration) {
+                setDuration(newEndTime);
+            }
             
             setVideoEndTime(newEndTime);
         };
@@ -544,7 +558,7 @@ const EditorContent: React.FC = () => {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [resizingVideo, duration, videoOffset, setVideoEndTime]);
+    }, [resizingVideo, duration, videoDuration, videoOffset, setDuration, setVideoEndTime]);
 
     // --- Keyboard handler ---
     useEffect(() => {
@@ -1178,123 +1192,234 @@ const EditorContent: React.FC = () => {
                                         onMouseLeave={() => setIsDraggingOffset(false)}
                                         style={{ cursor: editMode ? 'pointer' : isDraggingOffset ? 'grabbing' : 'grab' }}
                                     >
-                                        <div
-                                            className="flex flex-col relative h-full overflow-hidden transition-all duration-75"
-                                            style={{
-                                                left: `${(Math.max(0, -videoOffset) / duration) * 100}%`,
-                                                width: `${((videoEndTime - Math.max(0, -videoOffset)) / duration) * 100}%`,
-                                                minWidth: "20px"
-                                            }}
-                                        >
-                                            {/* Translate for the actual frames inside the visible clip */}
-                                            <div 
-                                               className="absolute top-0 bottom-0 flex flex-col overflow-hidden"
-                                               style={{
-                                                   transform: videoDuration > 0 ? `translateX(${( -Math.max(0, videoOffset) / videoDuration ) * 100}%)` : "none",
-                                                   width: `${(videoDuration / (videoEndTime - Math.max(0, -videoOffset))) * 100}%`
-                                               }}
-                                            >
-                                               <div className="flex-1 flex flex-col relative w-full min-h-0 shrink-0">
-                                                   {/* Video Thumbnails Track */}
-                                                   <div className="flex-1 relative w-full min-h-0 shrink-0">
-                                                       <VideoTimelineTrack videoFile={videoTrack.file} duration={videoDuration} height={100} />
-                                                       <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                           VIDEO
-                                                       </div>
-                                                   </div>
-                                                   
-                                                   {/* Extracted Audio Waveform Track */}
-                                                   {videoAudioTrack && (
-                                                       <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
-                                                           {videoAudioTrack.buffer ? (
-                                                               <>
-                                                                   <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={100} />
-                                                                   <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
-                                                                       VIDEO AUDIO {videoAudioTrack.muted ? '(MUTED)' : ''}
-                                                                   </div>
-                                                               </>
-                                                           ) : (
-                                                               <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-500 italic">
-                                                                   Cargando audio del video...
-                                                               </div>
-                                                           )}
-                                                       </div>
-                                                   )}
-                                               </div>
-                                            </div>
+                                         {(() => {
+                                             const clipDuration = Math.max(0.1, videoEndTime - Math.max(0, -videoOffset));
+                                             const numVideoLoops = (videoDuration > 0 && clipDuration > 0)
+                                                 ? Math.max(1, Math.ceil((clipDuration + Math.max(0, videoOffset)) / videoDuration))
+                                                 : 1;
 
-                                            {/* Fade Overlays (SVG) */}
-                                            <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
-                                                {videoFadeIn > 0 && (
-                                                    <path 
-                                                        d={`M 0 0 L ${(videoFadeIn / Math.max(0.1, videoEndTime - Math.max(0, -videoOffset))) * 100} 0 L 0 100 Z`} 
-                                                        className="fill-white/20" 
-                                                        vectorEffect="non-scaling-stroke"
-                                                        preserveAspectRatio="none"
-                                                    />
-                                                )}
-                                                {videoFadeOut > 0 && (
-                                                    <path 
-                                                        d={`M 100 0 L ${100 - (videoFadeOut / Math.max(0.1, videoEndTime - Math.max(0, -videoOffset))) * 100} 0 L 100 100 Z`} 
-                                                        className="fill-white/20" 
-                                                        vectorEffect="non-scaling-stroke"
-                                                        preserveAspectRatio="none"
-                                                    />
-                                                )}
-                                            </svg>
-
-                                            {/* Fade Handles (Vegas Style) */}
-                                            {!editMode && (
-                                                <>
-                                                    {/* Fade In (Top Left) */}
-                                                    <div 
-                                                        className="absolute top-0 left-0 w-4 h-4 cursor-ew-resize z-30 group"
-                                                        onMouseDown={(e) => {
-                                                            e.stopPropagation();
-                                                            setResizingFade({ type: "in", startX: e.clientX, initialValue: videoFadeIn });
+                                             return (
+                                                 <div
+                                                     className="flex flex-col relative h-full overflow-hidden transition-all duration-75"
+                                                     style={{
+                                                         left: `${(Math.max(0, -videoOffset) / duration) * 100}%`,
+                                                         width: `${(clipDuration / duration) * 100}%`,
+                                                         minWidth: "20px"
+                                                     }}
+                                                 >
+                                                     {/* Repeating Video & Audio Track Loops */}
+                                                     <div 
+                                                        className="absolute inset-0 flex overflow-hidden"
+                                                        style={{
+                                                            transform: videoDuration > 0 ? `translateX(${( -Math.max(0, videoOffset) / videoDuration ) * 100}%)` : "none"
                                                         }}
-                                                    >
-                                                        <div className="absolute top-0 left-0 w-full h-full text-white/50 group-hover:text-white transition-colors">
-                                                            <svg viewBox="0 0 24 24" fill="currentColor">
-                                                                <path d="M4 4 Q 4 20 20 20 L 20 4 Z" opacity="0.3" />
-                                                                <path d="M4 4 Q 4 20 20 20" fill="none" stroke="currentColor" strokeWidth="2" />
-                                                            </svg>
-                                                        </div>
-                                                    </div>
+                                                     >
+                                                        {Array.from({ length: numVideoLoops }).map((_, loopIdx) => (
+                                                            <div
+                                                                key={`v-loop-${loopIdx}`}
+                                                                className="h-full flex flex-col relative shrink-0 overflow-hidden"
+                                                                style={{
+                                                                    width: `${videoDuration > 0 ? (videoDuration / clipDuration) * 100 : 100}%`
+                                                                }}
+                                                            >
+                                                                <div className="flex-1 flex flex-col relative w-full min-h-0 shrink-0">
+                                                                    {/* Video Thumbnails Track */}
+                                                                    <div className="flex-1 relative w-full min-h-0 shrink-0">
+                                                                        <VideoTimelineTrack videoFile={videoTrack.file} duration={videoDuration} height={100} />
+                                                                        <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none flex items-center gap-1">
+                                                                            <span>VIDEO</span>
+                                                                            {numVideoLoops > 1 && (
+                                                                                <span className="bg-purple-700/80 px-1 py-0.2 rounded text-[7px] text-purple-100 font-mono">
+                                                                                    #{loopIdx + 1}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    
+                                                                    {/* Extracted Audio Waveform Track */}
+                                                                    {videoAudioTrack && (
+                                                                        <div className="flex-1 relative w-full min-h-0 shrink-0 border-t border-gray-800 bg-gray-950">
+                                                                            {videoAudioTrack.buffer ? (
+                                                                                <>
+                                                                                    <WaveformDisplay buffer={videoAudioTrack.buffer} color={videoAudioTrack.color} height={100} />
+                                                                                    <div className="absolute top-1 left-1 z-10 bg-purple-900/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] text-purple-300 font-bold pointer-events-none">
+                                                                                        VIDEO AUDIO {videoAudioTrack.muted ? '(MUTED)' : ''}
+                                                                                    </div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-500 italic">
+                                                                                    Cargando audio del video...
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                     </div>
 
-                                                    {/* Fade Out (Top Right) */}
-                                                    <div 
-                                                        className="absolute top-0 right-0 w-4 h-4 cursor-ew-resize z-30 group"
-                                                        onMouseDown={(e) => {
-                                                            e.stopPropagation();
-                                                            setResizingFade({ type: "out", startX: e.clientX, initialValue: videoFadeOut });
-                                                        }}
-                                                    >
-                                                        <div className="absolute top-0 right-0 w-full h-full text-white/50 group-hover:text-white transition-colors">
-                                                            <svg viewBox="0 0 24 24" fill="currentColor" transform="scale(-1, 1)">
-                                                                <path d="M4 4 Q 4 20 20 20 L 20 4 Z" opacity="0.3" />
-                                                                <path d="M4 4 Q 4 20 20 20" fill="none" stroke="currentColor" strokeWidth="2" />
-                                                            </svg>
-                                                        </div>
-                                                    </div>
-                                                </>
-                                            )}
+                                                     {/* Vegas Pro Style Cyan Loop Notch Markers */}
+                                                     {videoDuration > 0 && (() => {
+                                                         const vStartOffset = Math.max(0, videoOffset);
+                                                         const firstNotch = videoDuration - (vStartOffset % videoDuration);
+                                                         const notches: number[] = [];
+                                                         for (let t = firstNotch; t < clipDuration - 0.05; t += videoDuration) {
+                                                             if (t > 0.05) notches.push(t);
+                                                         }
+                                                         return notches.map((notchTime, idx) => {
+                                                             const pct = (notchTime / clipDuration) * 100;
+                                                             return (
+                                                                 <div
+                                                                     key={`loop-notch-${idx}`}
+                                                                     className="absolute top-0 bottom-0 z-30 pointer-events-none -translate-x-1/2 flex flex-col items-center"
+                                                                     style={{ left: `${pct}%` }}
+                                                                     title={`Punto de repetición de evento (Vegas Pro) #${idx + 1}`}
+                                                                 >
+                                                                     {/* Cyan Notch Diamond/Triangle */}
+                                                                     <div className="w-2.5 h-2.5 bg-cyan-400 border border-cyan-200 shadow flex items-center justify-center -translate-y-1/2 rotate-45 shrink-0" style={{ borderRadius: '1px' }} />
+                                                                     {/* Vertical notch guide line */}
+                                                                     <div className="w-px h-full bg-cyan-400/50 border-r border-dashed border-cyan-300/60" />
+                                                                 </div>
+                                                             );
+                                                         });
+                                                     })()}
 
-                                            {!editMode && (
-                                                <div 
-                                                    className="absolute inset-y-0 right-0 w-3 cursor-ew-resize hover:bg-white/20 transition-colors z-40 group"
-                                                    onMouseDown={(e) => {
-                                                        e.stopPropagation();
-                                                        setResizingVideo({
-                                                            startX: e.clientX,
-                                                            initialEndTime: videoEndTime
-                                                        });
-                                                    }}
-                                                >
-                                                    <div className="absolute inset-y-0 right-0 w-0.5 bg-purple-400 opacity-50 group-hover:opacity-100"></div>
-                                                </div>
-                                            )}
-                                        </div>
+                                                     {/* Fade Overlays (SVG) */}
+                                                     <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+                                                         {videoFadeIn > 0 && (
+                                                             <path 
+                                                                 d={`M 0 0 L ${(videoFadeIn / Math.max(0.1, clipDuration)) * 100} 0 L 0 100 Z`} 
+                                                                 className="fill-white/20" 
+                                                                 vectorEffect="non-scaling-stroke"
+                                                                 preserveAspectRatio="none"
+                                                             />
+                                                         )}
+                                                         {videoFadeOut > 0 && (
+                                                             <path 
+                                                                 d={`M 100 0 L ${100 - (videoFadeOut / Math.max(0.1, clipDuration)) * 100} 0 L 100 100 Z`} 
+                                                                 className="fill-white/20" 
+                                                                 vectorEffect="non-scaling-stroke"
+                                                                 preserveAspectRatio="none"
+                                                             />
+                                                         )}
+                                                     </svg>
+
+                                                     {/* Fade Handles (Vegas Pro Style) */}
+                                                     {!editMode && (
+                                                         <>
+                                                             {/* Fade In Handle (Top Left) */}
+                                                             <div 
+                                                                 className="absolute top-0 w-6 h-6 cursor-ew-resize z-40 group flex items-start justify-start"
+                                                                 style={{ left: `${(videoFadeIn / Math.max(0.1, clipDuration)) * 100}%` }}
+                                                                 onMouseDown={(e) => {
+                                                                     e.stopPropagation();
+                                                                     setResizingFade({ type: "in", startX: e.clientX, initialValue: videoFadeIn });
+                                                                 }}
+                                                                 onMouseEnter={() => setHoveredFadeHandle('in')}
+                                                                 onMouseLeave={() => setHoveredFadeHandle(null)}
+                                                                 title={`Desplazamiento del desvanecimiento de entrada ${formatVegasTime(videoFadeIn)}\nArrastrar para ajustar la duración del desvanecimiento de entrada aplicado al evento.`}
+                                                             >
+                                                                 <div className="w-3.5 h-3.5 bg-blue-500 hover:bg-blue-400 border border-blue-200 shadow-md flex items-center justify-center -translate-x-1/2 rounded-bl-full transition-transform group-hover:scale-125">
+                                                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2 h-2 text-white">
+                                                                         <path d="M4 20 Q 4 4 20 4" />
+                                                                     </svg>
+                                                                 </div>
+
+                                                                 {/* Vegas Pro Tooltip Box on Hover */}
+                                                                 {(hoveredFadeHandle === 'in' && !resizingFade) && (
+                                                                     <div className="absolute top-6 left-0 z-50 bg-white text-gray-900 border border-gray-300 rounded shadow-2xl px-3 py-1.5 pointer-events-none whitespace-nowrap text-xs">
+                                                                         <div className="font-bold text-gray-900 text-[12px] flex items-center gap-1.5">
+                                                                             <span>Desplazamiento del desvanecimiento de entrada</span>
+                                                                             <span className="font-mono text-blue-700 bg-blue-50 px-1 py-0.2 rounded border border-blue-200">{formatVegasTime(videoFadeIn)}</span>
+                                                                         </div>
+                                                                         <div className="text-[11px] text-gray-600 mt-0.5">
+                                                                             Arrastrar para ajustar la duración del desvanecimiento de entrada aplicado al evento.
+                                                                         </div>
+                                                                     </div>
+                                                                 )}
+                                                             </div>
+
+                                                             {/* Fade Out Handle (Top Right) */}
+                                                             <div 
+                                                                 className="absolute top-0 w-6 h-6 cursor-ew-resize z-40 group flex items-start justify-end"
+                                                                 style={{ right: `${(videoFadeOut / Math.max(0.1, clipDuration)) * 100}%` }}
+                                                                 onMouseDown={(e) => {
+                                                                     e.stopPropagation();
+                                                                     setResizingFade({ type: "out", startX: e.clientX, initialValue: videoFadeOut });
+                                                                 }}
+                                                                 onMouseEnter={() => setHoveredFadeHandle('out')}
+                                                                 onMouseLeave={() => setHoveredFadeHandle(null)}
+                                                                 title={`Desplazamiento del desvanecimiento de salida ${formatVegasTime(videoFadeOut)}\nArrastrar para ajustar la duración del desvanecimiento de salida aplicado al evento.`}
+                                                             >
+                                                                 <div className="w-3.5 h-3.5 bg-blue-500 hover:bg-blue-400 border border-blue-200 shadow-md flex items-center justify-center translate-x-1/2 rounded-br-full transition-transform group-hover:scale-125">
+                                                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2 h-2 text-white">
+                                                                         <path d="M20 20 Q 20 4 4 4" />
+                                                                     </svg>
+                                                                 </div>
+
+                                                                 {/* Vegas Pro Tooltip Box on Hover */}
+                                                                 {(hoveredFadeHandle === 'out' && !resizingFade) && (
+                                                                     <div className="absolute top-6 right-0 z-50 bg-white text-gray-900 border border-gray-300 rounded shadow-2xl px-3 py-1.5 pointer-events-none whitespace-nowrap text-xs">
+                                                                         <div className="font-bold text-gray-900 text-[12px] flex items-center gap-1.5">
+                                                                             <span>Desplazamiento del desvanecimiento de salida</span>
+                                                                             <span className="font-mono text-blue-700 bg-blue-50 px-1 py-0.2 rounded border border-blue-200">{formatVegasTime(videoFadeOut)}</span>
+                                                                         </div>
+                                                                         <div className="text-[11px] text-gray-600 mt-0.5">
+                                                                             Arrastrar para ajustar la duración del desvanecimiento de salida aplicado al evento.
+                                                                         </div>
+                                                                     </div>
+                                                                 )}
+                                                             </div>
+                                                         </>
+                                                     )}
+
+                                                     {/* Recortar final de evento Handle (Vegas Pro) */}
+                                                     {!editMode && (
+                                                         <div 
+                                                             className="absolute inset-y-0 right-0 w-3.5 cursor-ew-resize hover:bg-purple-500/20 transition-colors z-40 group flex items-center justify-end"
+                                                             onMouseDown={(e) => {
+                                                                 e.stopPropagation();
+                                                                 setResizingVideo({
+                                                                     startX: e.clientX,
+                                                                     initialEndTime: videoEndTime
+                                                                 });
+                                                             }}
+                                                             title="Recortar final de evento: Arrastrar a la derecha para repetir el video en bucle"
+                                                         >
+                                                             <div className="h-full w-1 bg-purple-400 group-hover:bg-cyan-400 group-hover:w-1.5 opacity-75 group-hover:opacity-100 transition-all flex items-center justify-center shadow">
+                                                                 <div className="w-0.5 h-6 bg-white/90 rounded-full" />
+                                                             </div>
+                                                         </div>
+                                                     )}
+                                                 </div>
+                                             );
+                                         })()}
+                                         {/* Live Active Fade Resizing Tooltip Badge (Vegas Pro style) */}
+                                         {resizingFade && (
+                                             <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 bg-white text-gray-900 border border-gray-300 rounded-md shadow-2xl px-3.5 py-1.5 pointer-events-none whitespace-nowrap text-xs animate-pulse">
+                                                 <div className="font-bold text-gray-900 text-[12px] flex items-center gap-1.5">
+                                                     <span>{resizingFade.type === 'in' ? 'Desplazamiento del desvanecimiento de entrada' : 'Desplazamiento del desvanecimiento de salida'}</span>
+                                                     <span className="font-mono text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                                         {formatVegasTime(resizingFade.type === 'in' ? videoFadeIn : videoFadeOut)}
+                                                     </span>
+                                                 </div>
+                                                 <div className="text-[11px] text-gray-600 mt-0.5">
+                                                     Arrastrar para ajustar la duración del desvanecimiento de {resizingFade.type === 'in' ? 'entrada' : 'salida'} aplicado al evento.
+                                                 </div>
+                                             </div>
+                                         )}
+                                         {/* Live Resizing Video Tooltip Badge (Vegas Pro style) */}
+                                         {resizingVideo && videoDuration > 0 && (
+                                             <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 bg-gray-900/95 text-cyan-300 border border-cyan-500/70 px-2.5 py-1 rounded shadow-xl flex items-center gap-2 pointer-events-none text-[10px] font-mono animate-pulse">
+                                                 <span className="font-bold text-white">🎬 Recortar final de evento</span>
+                                                 <span>Final: {videoEndTime.toFixed(2)}s</span>
+                                                 {(videoEndTime - Math.max(0, -videoOffset)) > videoDuration && (
+                                                     <span className="bg-cyan-950 px-1.5 py-0.5 rounded text-cyan-400 font-bold border border-cyan-800">
+                                                         🔄 {((videoEndTime - Math.max(0, -videoOffset)) / videoDuration).toFixed(2)}x bucles
+                                                     </span>
+                                                 )}
+                                             </div>
+                                         )}
                                         {/* Offset badge */}
                                         {videoOffset !== 0 && (
                                             <div className="absolute top-1 right-1 z-10 bg-amber-900/70 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] text-amber-300 font-mono pointer-events-none">
@@ -1540,6 +1665,7 @@ const EditorContent: React.FC = () => {
                                 className="w-full h-full object-contain"
                                 style={{ opacity: videoOpacity }}
                                 muted
+                                loop
                                 onTimeUpdate={(e) => {
                                     // Sycn timeline if needed - but usually controlled by loop
                                 }}

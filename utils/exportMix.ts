@@ -277,7 +277,7 @@ export async function performExportMixToMp3(params: ExportParams) {
 
                 const isInactive = (timeVal: number) => {
                     const vNow = timeVal + videoOffset;
-                    return timeVal < vStart || timeVal >= videoEndTime || vNow >= videoDuration || vNow < 0;
+                    return timeVal < vStart || timeVal >= videoEndTime || vNow < 0;
                 };
 
                 const getVideoVolumeFactor = (timeVal: number) => {
