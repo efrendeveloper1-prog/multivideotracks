@@ -16,6 +16,8 @@ interface ExportParams {
     videoDuration: number;
     videoFadeIn: number;
     videoFadeOut: number;
+    videoFadeInType: 'linear' | 'fast' | 'slow' | 'smooth' | 'sharp';
+    videoFadeOutType: 'linear' | 'fast' | 'slow' | 'smooth' | 'sharp';
     audioContext: AudioContext;
     setExportStatus: (status: string) => void;
     setExportProgress: (progress: number) => void;
@@ -115,6 +117,8 @@ export async function performExportMixToMp3(params: ExportParams) {
         videoDuration,
         videoFadeIn,
         videoFadeOut,
+        videoFadeInType,
+        videoFadeOutType,
         audioContext,
         setExportStatus,
         setExportProgress,
@@ -283,10 +287,20 @@ export async function performExportMixToMp3(params: ExportParams) {
                 const getVideoVolumeFactor = (timeVal: number) => {
                     if (isInactive(timeVal)) return 0;
                     if (videoFadeIn > 0 && timeVal < vStart + videoFadeIn) {
-                        return (timeVal - vStart) / videoFadeIn;
+                        const x = (timeVal - vStart) / videoFadeIn;
+                        if (videoFadeInType === 'linear') return x;
+                        if (videoFadeInType === 'fast') return 1 - (1 - x) * (1 - x);
+                        if (videoFadeInType === 'slow') return x * x;
+                        if (videoFadeInType === 'smooth') return x * x * (3 - 2 * x);
+                        if (videoFadeInType === 'sharp') return Math.pow(x, 4);
                     }
                     if (videoFadeOut > 0 && timeVal > videoEndTime - videoFadeOut) {
-                        return (videoEndTime - timeVal) / videoFadeOut;
+                        const x = (timeVal - (videoEndTime - videoFadeOut)) / videoFadeOut;
+                        if (videoFadeOutType === 'linear') return 1 - x;
+                        if (videoFadeOutType === 'fast') return (1 - x) * (1 - x);
+                        if (videoFadeOutType === 'slow') return 1 - x * x;
+                        if (videoFadeOutType === 'smooth') return 1 - (x * x * (3 - 2 * x));
+                        if (videoFadeOutType === 'sharp') return Math.pow(1 - x, 4);
                     }
                     return 1;
                 };

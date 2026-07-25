@@ -45,6 +45,8 @@ const EditorContent: React.FC = () => {
         videoEndTime, setVideoEndTime,
         videoFadeIn, setVideoFadeIn,
         videoFadeOut, setVideoFadeOut,
+        videoFadeInType, setVideoFadeInType,
+        videoFadeOutType, setVideoFadeOutType,
         videoOpacity,
         cutRegions, setCutRegions, splitPoints, setSplitPoints,
         sections, setSections,
@@ -128,6 +130,111 @@ const EditorContent: React.FC = () => {
     const [resizingVideo, setResizingVideo] = useState<{ startX: number, initialEndTime: number } | null>(null);
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const [hoveredFadeHandle, setHoveredFadeHandle] = useState<'in' | 'out' | null>(null);
+    const [fadeContextMenu, setFadeContextMenu] = useState<{ visible: boolean; x: number; y: number; type: 'in' | 'out' } | null>(null);
+
+    useEffect(() => {
+        const closeMenu = () => setFadeContextMenu(null);
+        window.addEventListener('click', closeMenu);
+        return () => window.removeEventListener('click', closeMenu);
+    }, []);
+
+    const getMiniFadeIconPath = (dir: 'in' | 'out', shape: string) => {
+        const W = 64;
+        const H = 24;
+        let points = '';
+        const steps = 10;
+        if (dir === 'in') {
+            points = `M 0 ${H}`;
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const x = t * W;
+                let y = H;
+                if (shape === 'linear') {
+                    y = (1 - t) * H;
+                } else if (shape === 'fast') {
+                    y = (1 - t) * (1 - t) * H;
+                } else if (shape === 'slow') {
+                    y = (1 - t * t) * H;
+                } else if (shape === 'smooth') {
+                    y = (1 - (t * t * (3 - 2 * t))) * H;
+                } else if (shape === 'sharp') {
+                    y = (1 - Math.pow(t, 4)) * H;
+                }
+                points += ` L ${x} ${y}`;
+            }
+        } else {
+            points = `M 0 0`;
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const x = t * W;
+                let y = H;
+                if (shape === 'linear') {
+                    y = t * H;
+                } else if (shape === 'fast') {
+                    y = (1 - (1 - t) * (1 - t)) * H;
+                } else if (shape === 'slow') {
+                    y = t * t * H;
+                } else if (shape === 'smooth') {
+                    y = t * t * (3 - 2 * t) * H;
+                } else if (shape === 'sharp') {
+                    y = (1 - Math.pow(1 - t, 4)) * H;
+                }
+                points += ` L ${x} ${y}`;
+            }
+        }
+        return points;
+    };
+
+    const getFadeInPath = (wPct: number, type: string) => {
+        if (wPct <= 0) return '';
+        let points = `M 0 0 L ${wPct} 0`;
+        const steps = 20;
+        for (let i = steps; i >= 0; i--) {
+            const t = i / steps; // goes from 1 down to 0
+            const x = t * wPct;
+            let y = 100;
+            if (type === 'linear') {
+                y = (1 - t) * 100;
+            } else if (type === 'fast') {
+                y = (1 - t) * (1 - t) * 100;
+            } else if (type === 'slow') {
+                y = (1 - t * t) * 100;
+            } else if (type === 'smooth') {
+                y = (1 - (t * t * (3 - 2 * t))) * 100;
+            } else if (type === 'sharp') {
+                y = (1 - Math.pow(t, 4)) * 100;
+            }
+            points += ` L ${x} ${y}`;
+        }
+        points += ' Z';
+        return points;
+    };
+
+    const getFadeOutPath = (wPct: number, type: string) => {
+        if (wPct <= 0) return '';
+        const startX = 100 - wPct;
+        let points = `M ${startX} 0 L 100 0`;
+        const steps = 20;
+        for (let i = steps; i >= 0; i--) {
+            const t = i / steps; // goes from 1 down to 0
+            const x = startX + t * wPct;
+            let y = 100;
+            if (type === 'linear') {
+                y = t * 100;
+            } else if (type === 'fast') {
+                y = (1 - (1 - t) * (1 - t)) * 100;
+            } else if (type === 'slow') {
+                y = t * t * 100;
+            } else if (type === 'smooth') {
+                y = t * t * (3 - 2 * t) * 100;
+            } else if (type === 'sharp') {
+                y = (1 - Math.pow(1 - t, 4)) * 100;
+            }
+            points += ` L ${x} ${y}`;
+        }
+        points += ' Z';
+        return points;
+    };
 
     const formatVegasTime = (sec: number) => {
         const s = Math.max(0, sec);
@@ -1285,21 +1392,41 @@ const EditorContent: React.FC = () => {
                                                      })()}
 
                                                      {/* Fade Overlays (SVG) */}
-                                                     <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+                                                     <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none">
                                                          {videoFadeIn > 0 && (
                                                              <path 
-                                                                 d={`M 0 0 L ${(videoFadeIn / Math.max(0.1, clipDuration)) * 100} 0 L 0 100 Z`} 
-                                                                 className="fill-white/20" 
+                                                                 d={getFadeInPath((videoFadeIn / Math.max(0.1, clipDuration)) * 100, videoFadeInType)} 
+                                                                 className="fill-white/20 hover:fill-white/30 transition-colors cursor-context-menu pointer-events-auto" 
                                                                  vectorEffect="non-scaling-stroke"
                                                                  preserveAspectRatio="none"
+                                                                 onContextMenu={(e) => {
+                                                                     e.preventDefault();
+                                                                     e.stopPropagation();
+                                                                     setFadeContextMenu({
+                                                                         visible: true,
+                                                                         x: e.clientX,
+                                                                         y: e.clientY,
+                                                                         type: 'in'
+                                                                     });
+                                                                 }}
                                                              />
                                                          )}
                                                          {videoFadeOut > 0 && (
                                                              <path 
-                                                                 d={`M 100 0 L ${100 - (videoFadeOut / Math.max(0.1, clipDuration)) * 100} 0 L 100 100 Z`} 
-                                                                 className="fill-white/20" 
+                                                                 d={getFadeOutPath((videoFadeOut / Math.max(0.1, clipDuration)) * 100, videoFadeOutType)} 
+                                                                 className="fill-white/20 hover:fill-white/30 transition-colors cursor-context-menu pointer-events-auto" 
                                                                  vectorEffect="non-scaling-stroke"
                                                                  preserveAspectRatio="none"
+                                                                 onContextMenu={(e) => {
+                                                                     e.preventDefault();
+                                                                     e.stopPropagation();
+                                                                     setFadeContextMenu({
+                                                                         visible: true,
+                                                                         x: e.clientX,
+                                                                         y: e.clientY,
+                                                                         type: 'out'
+                                                                     });
+                                                                 }}
                                                              />
                                                          )}
                                                      </svg>
@@ -1315,9 +1442,19 @@ const EditorContent: React.FC = () => {
                                                                      e.stopPropagation();
                                                                      setResizingFade({ type: "in", startX: e.clientX, initialValue: videoFadeIn });
                                                                  }}
+                                                                 onContextMenu={(e) => {
+                                                                     e.preventDefault();
+                                                                     e.stopPropagation();
+                                                                     setFadeContextMenu({
+                                                                         visible: true,
+                                                                         x: e.clientX,
+                                                                         y: e.clientY,
+                                                                         type: 'in'
+                                                                     });
+                                                                 }}
                                                                  onMouseEnter={() => setHoveredFadeHandle('in')}
                                                                  onMouseLeave={() => setHoveredFadeHandle(null)}
-                                                                 title={`Desplazamiento del desvanecimiento de entrada ${formatVegasTime(videoFadeIn)}\nArrastrar para ajustar la duración del desvanecimiento de entrada aplicado al evento.`}
+                                                                 title={`Desplazamiento del desvanecimiento de entrada ${formatVegasTime(videoFadeIn)}\nArrastrar para ajustar la duración del desvanecimiento de entrada aplicado al evento.\nClic derecho para cambiar el tipo de curva.`}
                                                              >
                                                                  <div className="w-3.5 h-3.5 bg-blue-500 hover:bg-blue-400 border border-blue-200 shadow-md flex items-center justify-center -translate-x-1/2 rounded-bl-full transition-transform group-hover:scale-125">
                                                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2 h-2 text-white">
@@ -1347,9 +1484,19 @@ const EditorContent: React.FC = () => {
                                                                      e.stopPropagation();
                                                                      setResizingFade({ type: "out", startX: e.clientX, initialValue: videoFadeOut });
                                                                  }}
+                                                                 onContextMenu={(e) => {
+                                                                     e.preventDefault();
+                                                                     e.stopPropagation();
+                                                                     setFadeContextMenu({
+                                                                         visible: true,
+                                                                         x: e.clientX,
+                                                                         y: e.clientY,
+                                                                         type: 'out'
+                                                                     });
+                                                                 }}
                                                                  onMouseEnter={() => setHoveredFadeHandle('out')}
                                                                  onMouseLeave={() => setHoveredFadeHandle(null)}
-                                                                 title={`Desplazamiento del desvanecimiento de salida ${formatVegasTime(videoFadeOut)}\nArrastrar para ajustar la duración del desvanecimiento de salida aplicado al evento.`}
+                                                                 title={`Desplazamiento del desvanecimiento de salida ${formatVegasTime(videoFadeOut)}\nArrastrar para ajustar la duración del desvanecimiento de salida aplicado al evento.\nClic derecho para cambiar el tipo de curva.`}
                                                              >
                                                                  <div className="w-3.5 h-3.5 bg-blue-500 hover:bg-blue-400 border border-blue-200 shadow-md flex items-center justify-center translate-x-1/2 rounded-br-full transition-transform group-hover:scale-125">
                                                                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-2 h-2 text-white">
@@ -1850,6 +1997,62 @@ const EditorContent: React.FC = () => {
                         </div>
                         <span className="text-xs font-bold text-gray-300 mt-2">{exportProgress}%</span>
                     </div>
+                </div>
+            )}
+
+            {/* Vegas Pro Fade Curve Context Menu */}
+            {fadeContextMenu && (
+                <div 
+                    className="fixed z-[9999] bg-[#121212] border border-[#444] shadow-2xl p-0.5 flex flex-col w-[100px] select-none rounded animate-fadeIn"
+                    style={{ top: `${fadeContextMenu.y}px`, left: `${fadeContextMenu.x}px` }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {(['slow', 'linear', 'fast', 'smooth', 'sharp'] as const).map((curveShape) => {
+                        const isSelected = fadeContextMenu.type === 'in' ? (videoFadeInType === curveShape) : (videoFadeOutType === curveShape);
+                        return (
+                            <button
+                                key={curveShape}
+                                onClick={() => {
+                                    if (fadeContextMenu.type === 'in') {
+                                        setVideoFadeInType(curveShape);
+                                    } else {
+                                        setVideoFadeOutType(curveShape);
+                                    }
+                                    setFadeContextMenu(null);
+                                }}
+                                className={`flex items-center justify-between w-full h-[28px] px-1 border border-transparent transition-colors ${
+                                    isSelected 
+                                        ? 'bg-[#007fd4] text-white' 
+                                        : 'hover:bg-[#2a2a2a] text-gray-300'
+                                }`}
+                            >
+                                {/* Active dot */}
+                                <div className="w-3 h-3 flex items-center justify-center shrink-0">
+                                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </div>
+                                {/* SVG curve icon */}
+                                <div className="w-14 h-5 bg-[#1e1e1e] border border-[#333] relative overflow-hidden flex items-center justify-center rounded">
+                                    <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 64 24">
+                                        {fadeContextMenu.type === 'in' ? (
+                                            <path
+                                                d={getMiniFadeIconPath('in', curveShape)}
+                                                fill="none"
+                                                stroke="#ffffff"
+                                                strokeWidth="1.5"
+                                            />
+                                        ) : (
+                                            <path
+                                                d={getMiniFadeIconPath('out', curveShape)}
+                                                fill="none"
+                                                stroke="#ffffff"
+                                                strokeWidth="1.5"
+                                            />
+                                        )}
+                                    </svg>
+                                </div>
+                            </button>
+                        );
+                    })}
                 </div>
             )}
         </div>
