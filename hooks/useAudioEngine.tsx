@@ -24,7 +24,7 @@ export interface LyricsSettings {
 export interface TimelineSection { id: string; label: string; start: number; end: number; color: string; loopMode: 'none' | 'infinite' | 'custom'; loopCount: number; }
 export interface PanelSizes { main: Record<string, number>; left: Record<string, number>; timeline: Record<string, number>; sidebar: Record<string, number>; }
 export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 } };
-export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'bottom', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'blur-in', idleAnimation: 'float-pulse-shine', exitAnimation: 'slide-down-stagger', kineticMode: 'none', kineticAnimation: 'wave', kineticStagger: 40, kineticExitAnimation: 'wave-out' };
+export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'middle', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'zoom-in', idleAnimation: 'zoom-in-slow', exitAnimation: 'none', kineticMode: 'none', kineticAnimation: 'wave', kineticStagger: 40, kineticExitAnimation: 'wave-out' };
 
 export interface ChordBlock { id: string; chord: string; startTime: number; endTime: number; }
 export interface Track { id: string; name: string; file: File | null; buffer?: AudioBuffer; volume: number; muted: boolean; soloed: boolean; color: string; isVideoAudio?: boolean; pan: number; outputChannel?: number; }
@@ -46,6 +46,8 @@ interface AudioEngineContextType {
     exportProgress: number;
     exportStatus: string;
     exportMixToMp3: () => Promise<void>;
+    exportMixToMp4: (resolution: '720p' | '1080p') => Promise<void>;
+    cancelExport: () => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextType | null>(null);
@@ -341,6 +343,12 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const analysersRef = useRef<{ left: AnalyserNode, right: AnalyserNode } | null>(null);
     const trackAnalysersRef = useRef<Map<string, AnalyserNode>>(new Map());
 
+    // Video export-specific refs
+    const invertBackgroundRef = useRef<boolean>(false);
+    const isExportingRef = useRef<boolean>(false);
+    const currentTimeRef = useRef<number>(0);
+    const cancelExportRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
         const initAudio = async () => {
             const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -380,6 +388,9 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         splitPointsRef.current = splitPoints; sectionsRef.current = sections; lyricsRef.current = lyrics; lyricsSettingsRef.current = lyricsSettings; customChordsRef.current = customChords;
         activeSongIdRef.current = activeSongId; songAnalysisRef.current = songAnalysis;
         playlistRef.current = playlist;
+        invertBackgroundRef.current = invertBackground;
+        isExportingRef.current = isExporting;
+        currentTimeRef.current = currentTime;
         if (soundTouchNodesRef.current) {
             soundTouchNodesRef.current.forEach((st, key) => {
                 const isDrum = key.endsWith('_true');
@@ -1406,6 +1417,312 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
     }, [playlist, masterVolume, isCountInEnabled, countInClicks, pitchShift, playbackRate]);
 
+    const cancelExport = useCallback(() => {
+        if (cancelExportRef.current) {
+            cancelExportRef.current();
+        } else {
+            setIsExporting(false);
+        }
+    }, [stop]);
+
+    const exportMixToMp4 = useCallback(async (resolution: '720p' | '1080p') => {
+        if (!audioContextRef.current) return;
+        if (tracksRef.current.length === 0) return;
+
+        const dur = durationRef.current;
+        if (dur <= 0) {
+            alert("No hay pistas de audio cargadas.");
+            return;
+        }
+
+        setIsExporting(true);
+        isExportingRef.current = true;
+        setExportProgress(0);
+        setExportStatus("Preparando exportación de video...");
+
+        try {
+            stop();
+
+            const canvas = document.createElement('canvas');
+            const canvasWidth = resolution === '1080p' ? 1920 : 1280;
+            const canvasHeight = resolution === '1080p' ? 1080 : 720;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error("No se pudo obtener el contexto 2D del canvas");
+
+            const dest = audioContextRef.current.createMediaStreamDestination();
+            if (!masterGainRef.current) throw new Error("Master gain node is not initialized");
+            masterGainRef.current.connect(dest);
+
+            const canvasStream = canvas.captureStream(30);
+
+            const audioTrack = dest.stream.getAudioTracks()[0];
+            const videoTrack = canvasStream.getVideoTracks()[0];
+            const combinedStream = new MediaStream([videoTrack, audioTrack]);
+
+            const mimeTypes = [
+                'video/mp4;codecs=h264,aac',
+                'video/mp4;codecs=avc1,mp4a.40.2',
+                'video/mp4',
+                'video/webm;codecs=h264,opus',
+                'video/webm;codecs=vp9,opus',
+                'video/webm'
+            ];
+            let selectedMimeType = '';
+            for (const mime of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(mime)) {
+                    selectedMimeType = mime;
+                    break;
+                }
+            }
+            if (!selectedMimeType) {
+                throw new Error("El navegador no soporta ningún formato de grabación de video compatible.");
+            }
+
+            const recorder = new MediaRecorder(combinedStream, { mimeType: selectedMimeType });
+            const chunks: Blob[] = [];
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+            };
+
+            const videoElement = videoRef.current;
+            const hasVideo = tracksRef.current.some(t => t.file && t.file.type.startsWith('video/'));
+
+            let animationFrameId: number;
+            const drawFrame = () => {
+                if (!isExportingRef.current) return;
+
+                // Calcular el tiempo transcurrido en el audio de la mezcla de forma precisa e inmediata
+                const audioTime = (audioContextRef.current!.currentTime - startTimeRef.current) * playbackRateRef.current;
+                const t = Math.max(0, audioTime);
+                
+                // Dibujar fondo
+                if (hasVideo && videoElement && videoElement.readyState >= 2) {
+                    const videoWidth = videoElement.videoWidth;
+                    const videoHeight = videoElement.videoHeight;
+                    
+                    if (videoWidth && videoHeight) {
+                        const canvasRatio = canvas.width / canvas.height;
+                        const videoRatio = videoWidth / videoHeight;
+                        
+                        let drawWidth = canvas.width;
+                        let drawHeight = canvas.height;
+                        let x = 0;
+                        let y = 0;
+                        
+                        if (videoRatio > canvasRatio) {
+                            // El video es más ancho que el canvas (limitar altura, centrar verticalmente)
+                            drawHeight = canvas.width / videoRatio;
+                            y = (canvas.height - drawHeight) / 2;
+                        } else {
+                            // El video es más alto que el canvas (limitar anchura, centrar horizontalmente)
+                            drawWidth = canvas.height * videoRatio;
+                            x = (canvas.width - drawWidth) / 2;
+                        }
+                        
+                        ctx.fillStyle = invertBackgroundRef.current ? '#ffffff' : '#000000';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(videoElement, x, y, drawWidth, drawHeight);
+                    } else {
+                        ctx.fillStyle = invertBackgroundRef.current ? '#ffffff' : '#000000';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                    }
+                } else {
+                    // Sin video: color de fondo plano (exactamente como en la presentación)
+                    ctx.fillStyle = invertBackgroundRef.current ? '#ffffff' : '#000000';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                // Buscar letra activa usando exactamente la misma lógica de SecondScreen.tsx
+                const mostRecentBlock = lyricsRef.current
+                    .filter(l => l.startTime !== null && l.startTime <= t)
+                    .sort((a, b) => b.startTime! - a.startTime!)[0];
+                    
+                let activeBlock = mostRecentBlock as any;
+                if (activeBlock && activeBlock.endTime && activeBlock.endTime < t) {
+                    activeBlock = undefined;
+                }
+
+                if (activeBlock && activeBlock.text) {
+                    const text: string = activeBlock.text;
+                    const font = lyricsSettingsRef.current.fontFamily.split(',')[0].trim().replace(/['"]/g, '') || 'Montserrat';
+                    const baseSize = lyricsSettingsRef.current.fontSize || 60;
+                    
+                    // Escalar proporcionalmente al canvas (base en 720p)
+                    const scaleFactor = canvas.height / 720;
+                    const fontSize = baseSize * scaleFactor;
+                    ctx.font = `bold ${fontSize}px ${font}, sans-serif`;
+                    
+                    let y = canvas.height * 0.8; // bottom (80%)
+                    if (lyricsSettingsRef.current.position === 'top') {
+                        y = canvas.height * 0.2; // top (20%)
+                    } else if (lyricsSettingsRef.current.position === 'middle') {
+                        y = canvas.height * 0.5; // middle (50%)
+                    }
+
+                    let x = canvas.width * 0.5; // center (50%)
+                    ctx.textAlign = 'center';
+                    if (lyricsSettingsRef.current.align === 'left') {
+                        x = canvas.width * 0.1; // left (10%)
+                        ctx.textAlign = 'left';
+                    } else if (lyricsSettingsRef.current.align === 'right') {
+                        x = canvas.width * 0.9; // right (90%)
+                        ctx.textAlign = 'right';
+                    }
+
+                    // --- EFECTOS Y ANIMACIONES ---
+                    const elapsed = t - (activeBlock.startTime || 0);
+                    let animScale = 1.0;
+                    let animTranslateY = 0;
+
+                    // 1. Animación de Entrada
+                    if (elapsed < 0.4 && lyricsSettingsRef.current.animation === 'zoom-in') {
+                        const progress = elapsed / 0.4;
+                        const easeOut = 1 - Math.pow(1 - progress, 3);
+                        animScale = 0.85 + easeOut * 0.15;
+                    } else if (elapsed < 0.5 && lyricsSettingsRef.current.animation === 'slide-up') {
+                        const progress = elapsed / 0.5;
+                        const easeOut = 1 - Math.pow(1 - progress, 3);
+                        animTranslateY = 30 * (1 - easeOut) * scaleFactor;
+                    }
+
+                    // 2. Animación de Espera (Idle)
+                    if (lyricsSettingsRef.current.idleAnimation === 'zoom-in-slow') {
+                        const progress = Math.min(1.0, elapsed / 15.0);
+                        animScale *= (1.0 + progress * 0.15);
+                    } else if (lyricsSettingsRef.current.idleAnimation === 'zoom-out-slow') {
+                        const progress = Math.min(1.0, elapsed / 15.0);
+                        animScale *= (1.0 - progress * 0.15);
+                    } else if (lyricsSettingsRef.current.idleAnimation === 'float-pulse-shine') {
+                        // Flotante + Pulso (ciclo de 4s)
+                        const progress = (Math.sin((elapsed / 4) * 2 * Math.PI - Math.PI / 2) + 1) / 2;
+                        animTranslateY += progress * -10 * scaleFactor;
+                        animScale *= (1.0 + progress * 0.02);
+                    }
+
+                    // Aplicar las transformaciones relativas al centro del texto
+                    ctx.save();
+                    ctx.translate(x, y + animTranslateY);
+                    ctx.scale(animScale, animScale);
+
+                    ctx.textBaseline = 'middle';
+
+                    const lines = text.split('\n');
+                    const lineHeight = fontSize * 1.25;
+                    const startY = -((lines.length - 1) * lineHeight) / 2; // Relativo al centro
+
+                    lines.forEach((line, idx) => {
+                        const lineY = startY + idx * lineHeight;
+
+                        if (!invertBackgroundRef.current) {
+                            // Sombra idéntica al CSS de la pantalla de presentación (fondo oscuro/video)
+                            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                            ctx.shadowBlur = 8 * scaleFactor;
+                            ctx.shadowOffsetX = 0;
+                            ctx.shadowOffsetY = 4 * scaleFactor;
+                        } else {
+                            // Sin sombra (fondo claro/invertido)
+                            ctx.shadowColor = 'transparent';
+                            ctx.shadowBlur = 0;
+                            ctx.shadowOffsetX = 0;
+                            ctx.shadowOffsetY = 0;
+                        }
+
+                        ctx.fillStyle = invertBackgroundRef.current ? '#000000' : '#ffffff';
+
+                        let drawX = 0;
+                        if (lyricsSettingsRef.current.align === 'left') {
+                            ctx.textAlign = 'left';
+                            drawX = -canvas.width * 0.4; // Ajuste relativo al centro (50% -> 10% = -40%)
+                        } else if (lyricsSettingsRef.current.align === 'right') {
+                            ctx.textAlign = 'right';
+                            drawX = canvas.width * 0.4; // Ajuste relativo al centro (50% -> 90% = +40%)
+                        } else {
+                            ctx.textAlign = 'center';
+                            drawX = 0;
+                        }
+
+                        ctx.fillText(line, drawX, lineY);
+
+                        // Resetear sombra
+                        ctx.shadowColor = 'transparent';
+                        ctx.shadowBlur = 0;
+                        ctx.shadowOffsetX = 0;
+                        ctx.shadowOffsetY = 0;
+                    });
+
+                    ctx.restore();
+                }
+
+                const progress = Math.min(100, Math.floor((t / dur) * 100));
+                setExportProgress(progress);
+                setExportStatus(`Exportando video... ${progress}% (${Math.floor(t)}s / ${Math.floor(dur)}s)`);
+
+                if (t >= dur) {
+                    recorder.stop();
+                } else {
+                    animationFrameId = requestAnimationFrame(drawFrame);
+                }
+            };
+
+            const cleanup = () => {
+                cancelAnimationFrame(animationFrameId);
+                try { masterGainRef.current?.disconnect(dest); } catch(e) {}
+                combinedStream.getTracks().forEach(track => track.stop());
+                cancelExportRef.current = null;
+            };
+
+            cancelExportRef.current = () => {
+                cleanup();
+                setIsExporting(false);
+                isExportingRef.current = false;
+                stop();
+            };
+
+            recorder.onstop = () => {
+                cleanup();
+
+                const isCancelled = !isExportingRef.current;
+                if (isCancelled) return;
+
+                const extension = selectedMimeType.includes('mp4') ? 'mp4' : 'mp4';
+                const fileType = selectedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
+                const blob = new Blob(chunks, { type: fileType });
+                
+                const activeSong = playlistRef.current.find(s => s.id === activeSongIdRef.current);
+                const title = activeSong ? activeSong.title : 'video-mix';
+                const filename = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.${extension}`;
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+                setIsExporting(false);
+                isExportingRef.current = false;
+                stop();
+            };
+
+            recorder.start();
+
+            seek(0);
+            togglePlay();
+
+            animationFrameId = requestAnimationFrame(drawFrame);
+
+        } catch (error) {
+            console.error("Error al exportar video:", error);
+            alert("Ocurrió un error al exportar el video.");
+            setIsExporting(false);
+            isExportingRef.current = false;
+            stop();
+        }
+    }, [seek, togglePlay, stop]);
+
     const startRecording = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1582,7 +1899,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             isCountInEnabled, setIsCountInEnabled: handleSetIsCountInEnabled, countInClicks, setCountInClicks: handleSetCountInClicks, isCountingIn, currentCountInBeat,
             countInOutputChannel, setCountInOutputChannel: handleSetCountInOutputChannel,
             recordingLatency, setRecordingLatency: handleSetRecordingLatency,
-            isExporting, exportProgress, exportStatus, exportMixToMp3
+            isExporting, exportProgress, exportStatus, exportMixToMp3, exportMixToMp4, cancelExport
         }}>
             {children}
         </AudioEngineContext.Provider>

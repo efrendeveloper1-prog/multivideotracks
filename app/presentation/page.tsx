@@ -16,6 +16,7 @@ function PresentationContent() {
     const [invertBackground, setInvertBackground] = useState<boolean>(false);
     const [showLyrics, setShowLyrics] = useState<boolean>(true);
     const exitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const exitTargetRef = useRef<string | null>(null);
 
     useEffect(() => {
         const channel = new BroadcastChannel('second-screen-video');
@@ -62,6 +63,18 @@ function PresentationContent() {
             if (!displayedLyric) {
                 setDisplayedLyric(currentLyric);
                 setIsExiting(false);
+                exitTargetRef.current = null;
+            } else if (isExiting) {
+                // If we are currently exiting, check if the incoming currentLyric is different
+                // from the target lyric of the exit animation.
+                if (currentLyric !== exitTargetRef.current) {
+                    // Abort transition: update displayed lyric immediately to the new target
+                    if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
+                    setDisplayedLyric(currentLyric);
+                    setIsExiting(false);
+                    exitTargetRef.current = null;
+                }
+                // If currentLyric === exitTargetRef.current, do nothing (let the exit animation complete)
             } else {
                 const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
                 const kineticExit = lyricsSettings?.kineticExitAnimation;
@@ -70,9 +83,10 @@ function PresentationContent() {
 
                 if (hasKineticExit || hasClassicExit) {
                     setIsExiting(true);
+                    exitTargetRef.current = currentLyric;
                     if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
 
-                    let exitDur = 550; // classic exit default
+                    let exitDur = 400; // synced to tailwind exit-down 0.4s
                     if (hasKineticExit && displayedLyric) {
                         const stagger = lyricsSettings?.kineticStagger ?? 40;
                         const unitCount = lyricsSettings?.kineticMode === 'by-letter'
@@ -84,14 +98,16 @@ function PresentationContent() {
                     exitTimeoutRef.current = setTimeout(() => {
                         setDisplayedLyric(currentLyric);
                         setIsExiting(false);
+                        exitTargetRef.current = null;
                     }, exitDur);
                 } else {
                     setDisplayedLyric(currentLyric);
                     setIsExiting(false);
+                    exitTargetRef.current = null;
                 }
             }
         }
-    }, [currentLyric, displayedLyric, lyricsSettings]);
+    }, [currentLyric, displayedLyric, lyricsSettings, isExiting]);
 
     const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
 

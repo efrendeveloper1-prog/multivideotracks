@@ -8,6 +8,7 @@ export const TransportControls: React.FC = () => {
     const [isEditingTempo, setIsEditingTempo] = useState(false);
     const [tempoInputValue, setTempoInputValue] = useState("");
     const [showChords, setShowChords] = useState(false);
+    const [showMp4Options, setShowMp4Options] = useState(false);
 
     const {
         isPlaying,
@@ -29,8 +30,19 @@ export const TransportControls: React.FC = () => {
         startRecording,
         stopRecording,
         tracks,
-        exportMixToMp3
+        exportMixToMp3,
+        exportMixToMp4
     } = useAudioEngine();
+
+    // Close Mp4 options menu when clicking outside
+    useEffect(() => {
+        if (!showMp4Options) return;
+        const handleOutsideClick = () => {
+            setShowMp4Options(false);
+        };
+        window.addEventListener('click', handleOutsideClick);
+        return () => window.removeEventListener('click', handleOutsideClick);
+    }, [showMp4Options]);
 
     // Setup Spacebar keyboard shortcut for Play/Pause
     useEffect(() => {
@@ -203,22 +215,65 @@ export const TransportControls: React.FC = () => {
                     <div className={`w-4 h-4 sm:w-6 sm:h-6 rounded-full transition-colors duration-300 ${isRecording ? 'bg-white' : 'bg-red-500'}`}></div>
                 </button>
 
-                {/* Export Mix Button */}
+                {/* Export Mix Button (MP3) */}
                 <button
                     onClick={exportMixToMp3}
                     disabled={!activeSongId || tracks.length === 0}
-                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors
+                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors text-xs font-bold
                         ${(activeSongId && tracks.length > 0) 
                             ? 'bg-gray-700 hover:bg-gray-600 active:bg-gray-800 text-white' 
                             : 'bg-gray-800 opacity-50 cursor-not-allowed text-gray-500'}`}
                     title="Exportar Mezcla a MP3"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-download">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" x2="12" y1="15" y2="3"/>
-                    </svg>
+                    MP3
                 </button>
+
+                {/* Export Video Button (MP4) */}
+                <div className="relative">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowMp4Options(!showMp4Options);
+                        }}
+                        disabled={!activeSongId || tracks.length === 0}
+                        className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center shadow-lg transition-colors text-xs font-bold
+                            ${(activeSongId && tracks.length > 0) 
+                                ? 'bg-purple-950 hover:bg-purple-900 active:bg-purple-950 text-purple-200 border border-purple-800/40' 
+                                : 'bg-gray-800 opacity-50 cursor-not-allowed text-gray-500'}`}
+                        title="Exportar Letras y Video a MP4"
+                    >
+                        MP4
+                    </button>
+
+                    {showMp4Options && (
+                        <div 
+                            className="absolute bottom-full mb-2 right-0 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 w-44 z-[99] animate-scale-in"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="px-2 py-1 text-[9px] font-bold text-gray-500 uppercase tracking-wider">Resolución de Video</div>
+                            <button
+                                onClick={() => {
+                                    exportMixToMp4('720p');
+                                    setShowMp4Options(false);
+                                }}
+                                className="flex items-center justify-between px-3 py-1.5 rounded-lg text-left text-xs font-semibold text-gray-200 hover:bg-gray-800 active:bg-gray-950 transition-colors w-full"
+                            >
+                                <span>HD (720p)</span>
+                                <span className="text-[10px] text-gray-500">1280x720</span>
+                            </button>
+                            <button
+                                onClick={() => {
+                                    exportMixToMp4('1080p');
+                                    setShowMp4Options(false);
+                                }}
+                                className="flex items-center justify-between px-3 py-1.5 rounded-lg text-left text-xs font-semibold text-gray-200 hover:bg-gray-800 active:bg-gray-950 transition-colors w-full"
+                            >
+                                <span>Full HD (1080p)</span>
+                                <span className="text-[10px] text-gray-500">1920x1080</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
 
                 {/* Next Button */}
                 <button

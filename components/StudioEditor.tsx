@@ -55,7 +55,7 @@ const EditorContent: React.FC = () => {
         customChords, playlist, activeSongId,
         songAnalysis, pitchShift, setPitchShift, playbackRate, setPlaybackRate,
         isCountInEnabled, setIsCountInEnabled, countInClicks, setCountInClicks, isCountingIn, currentCountInBeat,
-        isExporting, exportProgress, exportStatus
+        isExporting, exportProgress, exportStatus, cancelExport
     } = useAudioEngine();
 
     // Navigation guard to protect loaded tracks and playlist
@@ -1996,6 +1996,12 @@ const EditorContent: React.FC = () => {
                             />
                         </div>
                         <span className="text-xs font-bold text-gray-300 mt-2">{exportProgress}%</span>
+                        <button
+                            onClick={cancelExport}
+                            className="mt-4 px-4 py-1.5 bg-red-900/60 hover:bg-red-800/80 active:bg-red-950 border border-red-800/30 rounded-lg text-xs font-bold transition-all text-red-200"
+                        >
+                            Cancelar
+                        </button>
                     </div>
                 </div>
             )}

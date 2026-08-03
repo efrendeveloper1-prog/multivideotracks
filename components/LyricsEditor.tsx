@@ -3,6 +3,58 @@ import { useAudioEngine, LyricBlock } from '@/hooks/useAudioEngine';
 import { FontPicker } from './FontPicker';
 import { processVocalTrackForAI } from '@/utils/audioApiSync';
 
+const normalizeLyricsText = (text: string): string => {
+    if (!text) return text;
+
+    let normalized = text;
+
+    // 1. Reemplazos de palabras clave reverentes
+    const replacements: { pattern: RegExp; replacement: string }[] = [
+        { pattern: /\b(cristo)\b/gi, replacement: 'Cristo' },
+        { pattern: /\b(jes[uú]s)\b/gi, replacement: 'Jesús' },
+        { pattern: /\b(rey)\b/gi, replacement: 'Rey' },
+        // Pronombre Él (con acento original)
+        { pattern: /\b(é|É)l\b/g, replacement: 'Él' },
+        // Pronombre Él (sin acento en minúscula) pero en contextos de verbos
+        { pattern: /\b(el)(?=\s+(es|reina|vence|salva|sana|viene|est[aá]s?|tiene|puede|hace|da|vive|mora|obra|libera|sana|redime|limpia))\b/gi, replacement: 'Él' },
+        
+        { pattern: /\b(majestuoso|majestuso)\b/gi, replacement: 'Majestuoso' },
+        { pattern: /\b(poderoso)\b/gi, replacement: 'Poderoso' },
+        { pattern: /\b(se[nñ]or)\b/gi, replacement: 'Señor' },
+        { pattern: /\b(consolador)\b/gi, replacement: 'Consolador' },
+        { pattern: /\b(libertador)\b/gi, replacement: 'Libertador' },
+        { pattern: /\b(sanador)\b/gi, replacement: 'Sanador' },
+        { pattern: /\b(santo)\b/gi, replacement: 'Santo' },
+        { pattern: /\b(maestro)\b/gi, replacement: 'Maestro' },
+        { pattern: /\b(consejero)\b/gi, replacement: 'Consejero' },
+        { pattern: /\b(alt[ií]simo)\b/gi, replacement: 'Altísimo' },
+        { pattern: /\b(redentor)\b/gi, replacement: 'Redentor' },
+        { pattern: /\bel gran yo soy\b/gi, replacement: 'el Gran Yo Soy' },
+        { pattern: /\byo soy\b/gi, replacement: 'Yo Soy' },
+        
+        // Pronombre Tú (sin acento) en contextos de verbos
+        { pattern: /\b(tu)(?=\s+(eres|reinas|est[aá]s|tienes|puedes|salvas|sanas|haces|das|vienes|fuiste|ser[aá]s|vives|moras|obras|cambias|llamas|hablas|escuchas|oyes|miras|ves|amas|bautizas|llenas|guias|gu[ií]as|libres|liberas|vences|redimes|limpias))\b/gi, replacement: 'Tú' },
+        // Pronombre Tú (con o sin acento) en contextos después de conjunciones/preposiciones
+        { pattern: /\b(como|porque|s[oó]lo|y|pero|que)\s+(tu|tú)\b/gi, replacement: '$1 Tú' },
+    ];
+
+    replacements.forEach(({ pattern, replacement }) => {
+        normalized = normalized.replace(pattern, replacement);
+    });
+
+    // Pronombre Tú al final de línea o seguido de puntuación
+    normalized = normalized.replace(/\b(tu|tú)\b(?=[,.\!\?]|$)/gi, 'Tú');
+
+    // 2. Mayúscula al inicio de cada línea del bloque
+    normalized = normalized.split('\n').map(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return line;
+        return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    }).join('\n');
+
+    return normalized;
+};
+
 interface LyricsEditorProps {
     onClose: () => void;
 }
@@ -25,6 +77,71 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
     const [useAutoSelect, setUseAutoSelect] = useState(true);
     const [trackSelectPurpose, setTrackSelectPurpose] = useState<'transcribe' | 'align'>('transcribe');
+    const [isManualWithoutAI, setIsManualWithoutAI] = useState(false);
+    const [deletedHistory, setDeletedHistory] = useState<{ block: LyricBlock; index: number }[]>([]);
+    const [bulkBackup, setBulkBackup] = useState<LyricBlock[] | null>(null);
+
+    const handleDeleteBlock = (block: LyricBlock, index: number) => {
+        setDeletedHistory(prev => [...prev, { block, index }]);
+        removeLyricBlock(block.id);
+    };
+
+    const handleUndoDelete = () => {
+        if (deletedHistory.length === 0) return;
+        const lastDeleted = deletedHistory[deletedHistory.length - 1];
+        setDeletedHistory(prev => prev.slice(0, -1));
+
+        setLyrics(prev => {
+            const copy = [...prev];
+            copy.splice(lastDeleted.index, 0, lastDeleted.block);
+            return copy;
+        });
+    };
+
+    const handleClearLyrics = () => {
+        if (lyrics.length === 0) return;
+        setBulkBackup(lyrics);
+        clearLyrics();
+    };
+
+    const handleRestoreBackup = () => {
+        if (!bulkBackup) return;
+        setLyrics(bulkBackup);
+        setBulkBackup(null);
+    };
+
+    const handleAddBlockBetween = (index: number) => {
+        const newBlock: LyricBlock = {
+            id: crypto.randomUUID(),
+            text: '',
+            startTime: null,
+        };
+        setLyrics(prev => {
+            const copy = [...prev];
+            copy.splice(index + 1, 0, newBlock);
+            return copy;
+        });
+    };
+
+    const handlePasteManualWithoutAI = () => {
+        if (!rawText.trim()) return;
+
+        const normalized = normalizeLyricsText(rawText);
+        const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const formattedLines: string[] = [];
+        for (let i = 0; i < lines.length; i += linesPerBlock) {
+            const line1 = lines[i];
+            const line2 = (linesPerBlock === 2 && lines[i + 1]) ? '\n' + lines[i + 1] : '';
+            formattedLines.push(line1 + line2);
+        }
+
+        const newBlocks: LyricBlock[] = formattedLines.map(t => ({
+            id: crypto.randomUUID(), text: t, startTime: null
+        }));
+        setLyrics(prev => [...prev, ...newBlocks]);
+        setRawText('');
+        setView('editor');
+    };
 
     const VOCAL_REGEX = /vox|voz|vocal|vocals|choir|bgvs/i;
 
@@ -90,7 +207,8 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
         if (!rawText.trim()) return;
 
         // Paso 1: formatear el texto en bloques
-        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const normalized = normalizeLyricsText(rawText);
+        const lines = normalized.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         const formattedLines: string[] = [];
         for (let i = 0; i < lines.length; i += linesPerBlock) {
             const line1 = lines[i];
@@ -248,7 +366,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
 
                         {/* Opción 2: Insertar texto + alineación IA */}
                         <button
-                            onClick={() => { setView('manual-paste'); }}
+                            onClick={() => { setIsManualWithoutAI(false); setView('manual-paste'); }}
                             className="group flex items-start gap-4 p-5 rounded-xl border border-blue-700/50 bg-blue-900/20 hover:bg-blue-900/40 hover:border-blue-600 transition-all text-left"
                         >
                             <div className="w-12 h-12 rounded-xl bg-blue-700/40 group-hover:bg-blue-700/60 flex items-center justify-center text-2xl shrink-0 transition-colors">📋</div>
@@ -257,6 +375,20 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                 <p className="text-blue-300/80 text-xs leading-relaxed">
                                     Pegas el texto de la canción y la IA acomoda automáticamente cada frase al momento exacto en el que se canta.
                                     {!vocalTrack && <span className="block text-yellow-400/80 mt-1">Sin canal de voz: se guardarán sin tiempo para mapear manualmente.</span>}
+                                </p>
+                            </div>
+                        </button>
+
+                        {/* Opción 3: Insertar letra sin IA (Mapeo Manual) */}
+                        <button
+                            onClick={() => { setIsManualWithoutAI(true); setView('manual-paste'); }}
+                            className="group flex items-start gap-4 p-5 rounded-xl border border-teal-700/50 bg-teal-900/20 hover:bg-teal-900/40 hover:border-teal-600 transition-all text-left"
+                        >
+                            <div className="w-12 h-12 rounded-xl bg-teal-700/40 group-hover:bg-teal-700/60 flex items-center justify-center text-2xl shrink-0 transition-colors">✍</div>
+                            <div>
+                                <h3 className="text-white font-bold text-sm mb-1">Insertar letra sin IA (Mapeo Manual)</h3>
+                                <p className="text-teal-300/80 text-xs leading-relaxed">
+                                    Pegas el texto de la canción y creas los bloques directamente. Luego asignas los tiempos manualmente pulsando Inicio/Fin en el editor.
                                 </p>
                             </div>
                         </button>
@@ -435,7 +567,14 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                             onChange={(e) => setRawText(e.target.value)}
                         />
 
-                        {vocalTrack ? (
+                        {isManualWithoutAI ? (
+                            <div className="flex items-start gap-3 p-3 rounded-xl bg-teal-950/40 border border-teal-800/40">
+                                <span className="text-teal-400 text-lg shrink-0">✍</span>
+                                <p className="text-teal-300/80 text-xs leading-relaxed">
+                                    Modo manual seleccionado. Los bloques se guardarán sin tiempos para que puedas asignarlos tú mismo en el editor usando los botones "▶ Inicio" y "■ Fin".
+                                </p>
+                            </div>
+                        ) : vocalTrack ? (
                             <div className="flex items-start gap-3 p-3 rounded-xl bg-blue-950/40 border border-blue-800/40">
                                 <span className="text-blue-400 text-lg shrink-0">✨</span>
                                 <p className="text-blue-300/80 text-xs leading-relaxed">
@@ -461,7 +600,9 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                         </button>
                         <button
                             onClick={() => {
-                                if (vocalTracks.length > 0) {
+                                if (isManualWithoutAI) {
+                                    handlePasteManualWithoutAI();
+                                } else if (vocalTracks.length > 0) {
                                     setTrackSelectPurpose('align');
                                     setView('choose-track');
                                 } else {
@@ -469,9 +610,17 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                 }
                             }}
                             disabled={!rawText.trim()}
-                            className="px-5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-xs font-bold transition-colors"
+                            className={`px-5 py-1.5 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-xs font-bold transition-colors ${
+                                isManualWithoutAI 
+                                    ? 'bg-teal-600 hover:bg-teal-500' 
+                                    : 'bg-blue-600 hover:bg-blue-500'
+                            }`}
                         >
-                            {vocalTracks.length > 0 ? '✨ Seleccionar canal y Alinear' : 'Guardar Bloques'}
+                            {isManualWithoutAI 
+                                ? 'Guardar Bloques (Manual)' 
+                                : vocalTracks.length > 0 
+                                    ? '✨ Seleccionar canal y Alinear' 
+                                    : 'Guardar Bloques'}
                         </button>
                     </div>
                 </div>
@@ -619,8 +768,26 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                         ✨ IA
                                     </button>
                                 )}
+                                {deletedHistory.length > 0 && (
+                                    <button
+                                        onClick={handleUndoDelete}
+                                        className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-gray-900 rounded text-[10px] sm:text-xs font-bold transition-colors flex items-center gap-1 shadow border border-yellow-500/30 animate-pulse animate-duration-1000"
+                                        title={`Deshacer último borrado (${deletedHistory.length} restante${deletedHistory.length > 1 ? 's' : ''})`}
+                                    >
+                                        ↩ Deshacer
+                                    </button>
+                                )}
+                                {bulkBackup && (
+                                    <button
+                                        onClick={handleRestoreBackup}
+                                        className="px-2 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-[10px] sm:text-xs font-bold transition-colors shadow border border-teal-500/30"
+                                        title="Restaurar toda la letra borrada"
+                                    >
+                                        Recuperar Todo
+                                    </button>
+                                )}
                                 <button
-                                    onClick={() => { if (confirm('¿Estás seguro de que quieres borrar TODA la letra?')) clearLyrics(); }}
+                                    onClick={() => { if (confirm('¿Estás seguro de que quieres borrar TODA la letra?')) handleClearLyrics(); }}
                                     className="px-2 py-1 bg-red-900/40 hover:bg-red-800/60 text-red-400 border border-red-900/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
                                 >
                                     Vaciar
@@ -630,47 +797,65 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
 
                         {/* Lista de bloques */}
                         {lyrics.map((block, idx) => (
-                            <div key={block.id} className="flex gap-2 items-start bg-gray-800/50 p-2 sm:p-3 rounded border border-gray-700/50 group">
-                                <div className="flex flex-col items-center justify-center gap-0.5 shrink-0 w-14 sm:w-20">
-                                    <span className="text-[10px] text-gray-500 font-mono hidden sm:inline">#{idx+1}</span>
-                                    <div className={`text-[10px] sm:text-xs font-mono font-bold px-1 py-0.5 rounded w-full text-center ${block.startTime !== null ? 'text-green-400 bg-gray-950' : 'text-yellow-600 bg-gray-950'}`}>
-                                        ▶ {formatTime(block.startTime)}
+                            <React.Fragment key={block.id}>
+                                <div className="flex gap-2 items-start bg-gray-800/50 p-2 sm:p-3 rounded border border-gray-700/50 group">
+                                    <div className="flex flex-col items-center justify-center gap-0.5 shrink-0 w-14 sm:w-20">
+                                        <span className="text-[10px] text-gray-500 font-mono hidden sm:inline">#{idx+1}</span>
+                                        <div className={`text-[10px] sm:text-xs font-mono font-bold px-1 py-0.5 rounded w-full text-center ${block.startTime !== null ? 'text-green-400 bg-gray-950' : 'text-yellow-600 bg-gray-950'}`}>
+                                            ▶ {formatTime(block.startTime)}
+                                        </div>
+                                        <div className={`text-[10px] sm:text-xs font-mono px-1 py-0.5 rounded w-full text-center ${block.endTime ? 'text-orange-400 bg-gray-950' : 'text-gray-600 bg-gray-950'}`}>
+                                            ■ {formatTime(block.endTime ?? null)}
+                                        </div>
                                     </div>
-                                    <div className={`text-[10px] sm:text-xs font-mono px-1 py-0.5 rounded w-full text-center ${block.endTime ? 'text-orange-400 bg-gray-950' : 'text-gray-600 bg-gray-950'}`}>
-                                        ■ {formatTime(block.endTime ?? null)}
+                                    <textarea
+                                        className="flex-1 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs sm:text-sm text-gray-200 min-h-[2.5rem] resize-y focus:outline-none focus:border-blue-500"
+                                        value={block.text}
+                                        onChange={(e) => updateLyricBlock(block.id, { text: e.target.value })}
+                                    />
+                                    <div className="flex flex-col gap-1 shrink-0 justify-start">
+                                        <button
+                                            onClick={() => updateLyricBlock(block.id, { startTime: currentTime })}
+                                            title="Mapear Inicio al Playhead actual"
+                                            className="p-1 sm:px-2 sm:py-1 bg-green-900/40 hover:bg-green-800 text-green-400 hover:text-white border border-green-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
+                                        >
+                                            <span className="hidden sm:inline">▶ Inicio</span>
+                                            <span className="sm:hidden">▶</span>
+                                        </button>
+                                        <button
+                                            onClick={() => updateLyricBlock(block.id, { endTime: currentTime })}
+                                            title="Mapear Fin al Playhead actual"
+                                            className="p-1 sm:px-2 sm:py-1 bg-orange-900/40 hover:bg-orange-800 text-orange-400 hover:text-white border border-orange-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
+                                        >
+                                            <span className="hidden sm:inline">■ Fin</span>
+                                            <span className="sm:hidden">■</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteBlock(block, idx)}
+                                            className="p-1 sm:px-2 sm:py-1 bg-gray-800 hover:bg-red-900/60 text-gray-400 hover:text-red-400 rounded text-[10px] sm:text-xs transition-colors"
+                                        >
+                                            <span className="hidden sm:inline">Borrar</span>
+                                            <span className="sm:hidden">×</span>
+                                        </button>
                                     </div>
                                 </div>
-                                <textarea
-                                    className="flex-1 bg-gray-950 border border-gray-700 rounded px-2 py-1 text-xs sm:text-sm text-gray-200 min-h-[2.5rem] resize-y focus:outline-none focus:border-blue-500"
-                                    value={block.text}
-                                    onChange={(e) => updateLyricBlock(block.id, { text: e.target.value })}
-                                />
-                                <div className="flex flex-col gap-1 shrink-0 justify-start">
-                                    <button
-                                        onClick={() => updateLyricBlock(block.id, { startTime: currentTime })}
-                                        title="Mapear Inicio al Playhead actual"
-                                        className="p-1 sm:px-2 sm:py-1 bg-green-900/40 hover:bg-green-800 text-green-400 hover:text-white border border-green-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
-                                    >
-                                        <span className="hidden sm:inline">▶ Inicio</span>
-                                        <span className="sm:hidden">▶</span>
-                                    </button>
-                                    <button
-                                        onClick={() => updateLyricBlock(block.id, { endTime: currentTime })}
-                                        title="Mapear Fin al Playhead actual"
-                                        className="p-1 sm:px-2 sm:py-1 bg-orange-900/40 hover:bg-orange-800 text-orange-400 hover:text-white border border-orange-800/50 rounded text-[10px] sm:text-xs font-bold transition-colors"
-                                    >
-                                        <span className="hidden sm:inline">■ Fin</span>
-                                        <span className="sm:hidden">■</span>
-                                    </button>
-                                    <button
-                                        onClick={() => removeLyricBlock(block.id)}
-                                        className="p-1 sm:px-2 sm:py-1 bg-gray-800 hover:bg-red-900/60 text-gray-400 hover:text-red-400 rounded text-[10px] sm:text-xs transition-colors"
-                                    >
-                                        <span className="hidden sm:inline">Borrar</span>
-                                        <span className="sm:hidden">×</span>
-                                    </button>
-                                </div>
-                            </div>
+
+                                {/* Separador con botón Agregar en Medio */}
+                                {idx < lyrics.length - 1 && (
+                                    <div className="relative my-2 flex items-center justify-center group/add-btn py-1">
+                                        {/* Línea divisoria */}
+                                        <div className="absolute inset-x-0 h-[1px] bg-gray-800 group-hover/add-btn:bg-purple-600/40 transition-colors" />
+                                        {/* Botón "+" */}
+                                        <button
+                                            onClick={() => handleAddBlockBetween(idx)}
+                                            className="relative z-10 flex items-center justify-center w-6 h-6 rounded-full bg-gray-800 hover:bg-purple-600 text-gray-400 hover:text-white border border-gray-700 hover:border-purple-500 transition-all shadow-md transform hover:scale-110 text-xs font-bold font-mono"
+                                            title="Agregar bloque de texto en medio"
+                                        >
+                                            +
+                                        </button>
+                                    </div>
+                                )}
+                            </React.Fragment>
                         ))}
                         {lyrics.length === 0 && (
                             <div className="text-center p-8 text-gray-500 text-sm">
