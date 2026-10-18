@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useAudioEngine, LyricBlock } from '@/hooks/useAudioEngine';
 import { FontPicker } from './FontPicker';
-import { processVocalTrackForAI } from '@/utils/audioApiSync';
+import { processVocalTrackForAI, applyReadingAnticipation } from '@/utils/audioApiSync';
 
 const normalizeLyricsText = (text: string): string => {
     if (!text) return text;
@@ -80,6 +80,45 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     const [isManualWithoutAI, setIsManualWithoutAI] = useState(false);
     const [deletedHistory, setDeletedHistory] = useState<{ block: LyricBlock; index: number }[]>([]);
     const [bulkBackup, setBulkBackup] = useState<LyricBlock[] | null>(null);
+    const [leadTime, setLeadTime] = useState<number>(1.0);
+
+    const handleShiftExistingAnticipation = (seconds: number) => {
+        if (lyrics.length === 0) return;
+        setBulkBackup([...lyrics]);
+
+        const timedBlocks = lyrics.filter(l => l.startTime !== null) as { id: string; text: string; startTime: number; endTime?: number | null }[];
+        if (timedBlocks.length === 0) {
+            alert("No hay bloques con tiempos asignados para anticipar.");
+            return;
+        }
+
+        const adjusted = applyReadingAnticipation(
+            timedBlocks.map(b => ({
+                text: b.text,
+                startTime: b.startTime,
+                endTime: b.endTime ?? (b.startTime + 3.5)
+            })),
+            seconds
+        );
+
+        const newMap = new Map<string, { startTime: number; endTime: number }>();
+        timedBlocks.forEach((tb, i) => {
+            if (adjusted[i]) {
+                newMap.set(tb.id, {
+                    startTime: adjusted[i].startTime,
+                    endTime: adjusted[i].endTime
+                });
+            }
+        });
+
+        setLyrics(prev => prev.map(l => {
+            const adj = newMap.get(l.id);
+            if (adj) {
+                return { ...l, startTime: adj.startTime, endTime: adj.endTime };
+            }
+            return l;
+        }));
+    };
 
     const handleDeleteBlock = (block: LyricBlock, index: number) => {
         setDeletedHistory(prev => [...prev, { block, index }]);
@@ -142,43 +181,80 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
         setRawText('');
         setView('editor');
     };
+    const VOCAL_REGEX = /vox|voz|vocal|vocals|lead|voice|canto|cantante|melodia|choir|coro|bgvs|bgv|acapella/i;
+    const isLeadTrack = (name: string) => /lead|principal|main|guia|guide|cantante/i.test(name);
 
-    const VOCAL_REGEX = /vox|voz|vocal|vocals|choir|bgvs/i;
-
-    // Todos los canales que parecen ser de voz
-    const vocalTracks = useMemo(() => {
-        return tracks.filter(t => t.buffer && VOCAL_REGEX.test(t.name));
+    // Todas las pistas de audio válidas con buffer
+    const allAudioTracks = useMemo(() => {
+        return tracks.filter(t => t.buffer && !t.isVideoAudio);
     }, [tracks]);
 
-    // Para compatibilidad con el modo de insertar texto, el primero disponible
-    const vocalTrack = vocalTracks[0] ?? null;
+    // Canales que coinciden con términos vocales, priorizando la voz principal/lead
+    const vocalTracks = useMemo(() => {
+        const vocals = allAudioTracks.filter(t => VOCAL_REGEX.test(t.name));
+        return [...vocals].sort((a, b) => {
+            const aLead = isLeadTrack(a.name) ? 1 : 0;
+            const bLead = isLeadTrack(b.name) ? 1 : 0;
+            return bLead - aLead;
+        });
+    }, [allAudioTracks]);
+
+    // Otras pistas de audio (instrumentos, backing, etc.)
+    const otherAudioTracks = useMemo(() => {
+        return allAudioTracks.filter(t => !VOCAL_REGEX.test(t.name));
+    }, [allAudioTracks]);
+
+    // Pista preferida por defecto
+    const vocalTrack = vocalTracks[0] ?? allAudioTracks[0] ?? null;
+
+    // Asegurar selección inicial de track
+    React.useEffect(() => {
+        if (selectedTrackIds.length === 0 && vocalTrack) {
+            setSelectedTrackIds([vocalTrack.id]);
+        }
+    }, [vocalTrack, selectedTrackIds.length]);
+
+    // Helper: resuelve los buffers seleccionados
+    const getSelectedBuffers = (): AudioBuffer[] => {
+        if (useAutoSelect) {
+            if (vocalTracks.length > 0) {
+                return vocalTracks.map(t => t.buffer!).filter(Boolean);
+            }
+            if (allAudioTracks.length > 0) {
+                return [allAudioTracks[0].buffer!].filter(Boolean);
+            }
+            return [];
+        }
+        return allAudioTracks
+            .filter(t => selectedTrackIds.includes(t.id))
+            .map(t => t.buffer!)
+            .filter(Boolean);
+    };
 
     // ──────────────────────────────────────────────────────────
     // Sincronización: IA transcribe con los canales seleccionados
     // ──────────────────────────────────────────────────────────
-    const handleAISyncTranscribe = async () => {
-        let buffersToUse: AudioBuffer[];
-        if (useAutoSelect) {
-            buffersToUse = vocalTracks.map(t => t.buffer!).filter(Boolean);
-        } else {
-            buffersToUse = vocalTracks
-                .filter(t => selectedTrackIds.includes(t.id))
-                .map(t => t.buffer!)
-                .filter(Boolean);
+    const handleAISyncTranscribe = async (customBuffers?: AudioBuffer[]) => {
+        const buffersToUse = (customBuffers && customBuffers.length > 0)
+            ? customBuffers
+            : getSelectedBuffers();
+
+        if (buffersToUse.length === 0) {
+            alert("No hay ningún canal de audio seleccionado. Por favor selecciona al menos un canal con audio.");
+            return;
         }
-        if (buffersToUse.length === 0) return;
 
         setIsSyncingAI(true);
         setSyncProgress(0);
-        setSyncStatus('Procesando audio...');
+        setSyncStatus('Preparando audio para Gemini...');
         try {
             const result = await processVocalTrackForAI(buffersToUse, '', 'transcribe', (p) => {
                 setSyncProgress(p);
-                if (p < 10) setSyncStatus('Mezclando canales...');
-                else if (p < 40) setSyncStatus('Preparando audio...');
-                else if (p < 80) setSyncStatus('Enviando a Gemini...');
-                else setSyncStatus('Esperando respuesta de la IA...');
-            });
+                if (p < 20) setSyncStatus('Optimizando audio vocal...');
+                else if (p < 50) setSyncStatus('Codificando pista de audio...');
+                else if (p < 80) setSyncStatus('Enviando a Gemini IA...');
+                else setSyncStatus('Transcribiendo letra y detectando tiempos...');
+            }, leadTime);
             setIsSyncingAI(false);
             if (result.length > 0) {
                 const newBlocks: LyricBlock[] = result.map((b) => ({
@@ -190,18 +266,19 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                 setLyrics(newBlocks);
                 setView('editor');
             } else {
-                alert("La IA no detectó texto. Intenta con el modo 'Insertar Texto'.");
+                alert("La IA escuchó el audio pero no detectó canto o voz inteligible. Asegúrate de haber seleccionado el canal de la voz principal, o usa la opción 'Insertar letra y alinear con IA'.");
                 setView('choose');
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("AI Sync Error:", error);
-            alert("Error al contactar la IA. Verifica tu API Key y conexión.");
             setIsSyncingAI(false);
+            alert(`Error al sincronizar con IA: ${error?.message || error}`);
+            setView('choose');
         }
     };
 
+    // ──────────────────────────────────────────────────────────
     // Sincronización: usuario pega texto → IA alinea los tiempos
-    // Acepta buffers externos (cuando viene desde choose-track) o usa vocalTrack por defecto
     // ──────────────────────────────────────────────────────────
     const handlePasteAndAlign = async (externalBuffers?: AudioBuffer[]) => {
         if (!rawText.trim()) return;
@@ -217,9 +294,11 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
         }
 
         // Determinar qué buffers usar
-        const buffersToUse: AudioBuffer[] = externalBuffers ?? (vocalTrack?.buffer ? [vocalTrack.buffer] : []);
+        const buffersToUse = (externalBuffers && externalBuffers.length > 0)
+            ? externalBuffers
+            : getSelectedBuffers();
 
-        // Sin pista vocal: guardar bloques sin tiempos
+        // Sin pista de audio disponible: guardar bloques sin tiempos
         if (buffersToUse.length === 0) {
             const newBlocks: LyricBlock[] = formattedLines.map(t => ({
                 id: crypto.randomUUID(), text: t, startTime: null
@@ -227,6 +306,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
             setLyrics(prev => [...prev, ...newBlocks]);
             setRawText('');
             setView('editor');
+            alert("No hay pistas de audio cargadas. Los bloques se guardaron sin tiempo para mapeo manual.");
             return;
         }
 
@@ -243,11 +323,12 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                 'align',
                 (p) => {
                     setSyncProgress(p);
-                    if (p < 10) setSyncStatus('Mezclando canales...');
-                    else if (p < 40) setSyncStatus('Preparando audio...');
+                    if (p < 20) setSyncStatus('Optimizando audio...');
+                    else if (p < 50) setSyncStatus('Codificando pista de audio...');
                     else if (p < 80) setSyncStatus('Enviando letras y audio a Gemini...');
-                    else setSyncStatus('La IA está alineando los tiempos...');
-                }
+                    else setSyncStatus('La IA está sincronizando los tiempos de cada frase...');
+                },
+                leadTime
             );
             setIsSyncingAI(false);
 
@@ -268,9 +349,9 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                 setLyrics(prev => [...prev, ...newBlocks]);
                 setRawText('');
                 setView('editor');
-                alert("La IA no pudo alinear los tiempos. Los bloques se guardaron sin tiempo — puedes mapearlos manualmente.");
+                alert("La IA procesó el audio pero no pudo alinear los tiempos con certeza. Los bloques se guardaron sin tiempo para mapeo manual.");
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Align Error:", error);
             setIsSyncingAI(false);
             const newBlocks: LyricBlock[] = formattedLines.map(t => ({
@@ -279,18 +360,12 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
             setLyrics(prev => [...prev, ...newBlocks]);
             setRawText('');
             setView('editor');
-            alert("Hubo un error con la IA, los bloques se guardaron sin tiempo. Puedes mapearlos manualmente.");
+            alert(`Error al alinear con IA: ${error?.message || error}. Los bloques se guardaron sin tiempos.`);
         }
     };
 
-    // Helper: resuelve los buffers seleccionados en choose-track
-    const getSelectedBuffers = (): AudioBuffer[] => {
-        if (useAutoSelect) return vocalTracks.map(t => t.buffer!).filter(Boolean);
-        return vocalTracks.filter(t => selectedTrackIds.includes(t.id)).map(t => t.buffer!).filter(Boolean);
-    };
-
     const formatTime = (t: number | null) => {
-        if (t === null) return '--:--';
+        if (t === null || isNaN(t)) return '--:--';
         const m = Math.floor(t / 60);
         const s = Math.floor(t % 60);
         const ms = Math.floor((t % 1) * 10);
@@ -320,7 +395,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                         <h3 className="text-white font-bold text-lg mb-1">✨ Sincronizando con IA</h3>
                         <p className="text-purple-300 text-sm">{syncStatus}</p>
                     </div>
-                    <p className="text-gray-500 text-xs">Gemini está analizando el audio. Esto puede tardar 10-30 segundos dependiendo de la duración de la canción.</p>
+                    <p className="text-gray-500 text-xs">Gemini está analizando el audio. Esto puede tardar unos segundos según la duración del tema.</p>
                 </div>
             </div>
         );
@@ -343,23 +418,54 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                     </div>
 
                     <div className="p-6 flex flex-col gap-4">
-                        <p className="text-gray-400 text-sm text-center mb-2">¿Cómo deseas agregar las letras?</p>
+                        <p className="text-gray-400 text-sm text-center mb-1">¿Cómo deseas agregar las letras?</p>
+
+                        {/* Control de Anticipación de Lectura */}
+                        <div className="bg-gray-950/80 border border-purple-800/40 rounded-xl p-3 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="text-xl shrink-0">⏱️</span>
+                                <div className="min-w-0">
+                                    <div className="text-white text-xs font-semibold flex items-center gap-1.5">
+                                        Anticipación de lectura
+                                        <span className="text-[10px] bg-purple-900/60 text-purple-300 border border-purple-700/50 px-1.5 py-0.2 rounded font-mono">
+                                            -{leadTime}s
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-400 text-[11px] truncate">Muestra la frase antes para dar tiempo a leer</p>
+                                </div>
+                            </div>
+                            <select
+                                value={leadTime}
+                                onChange={(e) => setLeadTime(parseFloat(e.target.value))}
+                                className="bg-gray-900 text-purple-300 text-xs font-bold rounded-lg border border-purple-700/60 px-2.5 py-1.5 outline-none cursor-pointer hover:border-purple-500 transition-colors shrink-0"
+                            >
+                                <option value={0.5}>0.5 seg antes</option>
+                                <option value={0.8}>0.8 seg antes</option>
+                                <option value={1.0}>1.0 seg antes (Recomendado)</option>
+                                <option value={1.5}>1.5 seg antes</option>
+                                <option value={2.0}>2.0 seg antes</option>
+                                <option value={0.0}>0 seg (Exacto al cantar)</option>
+                            </select>
+                        </div>
 
                         {/* Opción 1: IA completa */}
                         <button
                             onClick={() => { setTrackSelectPurpose('transcribe'); setView('choose-track'); }}
-                            disabled={vocalTracks.length === 0}
+                            disabled={allAudioTracks.length === 0}
                             className="group relative flex items-start gap-4 p-5 rounded-xl border border-purple-700/50 bg-purple-900/20 hover:bg-purple-900/40 hover:border-purple-600 transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             <div className="w-12 h-12 rounded-xl bg-purple-700/40 group-hover:bg-purple-700/60 flex items-center justify-center text-2xl shrink-0 transition-colors">✨</div>
                             <div>
                                 <h3 className="text-white font-bold text-sm mb-1">Sincronizar con IA desde cero</h3>
                                 <p className="text-purple-300/80 text-xs leading-relaxed">
-                                    La IA escucha el canal de voz, transcribe la letra y asigna automáticamente los tiempos a cada frase.
-                                    {vocalTracks.length === 0
-                                        ? <span className="block text-red-400 mt-1">⚠ Requiere un canal de voz (vox, vocal, choir, bgvs)</span>
-                                        : <span className="block text-purple-400/70 mt-1">{vocalTracks.length} canal{vocalTracks.length > 1 ? 'es' : ''} de voz detectado{vocalTracks.length > 1 ? 's' : ''}</span>
-                                    }
+                                    La IA escucha el audio vocal, transcribe la letra y asigna automáticamente los tiempos a cada frase.
+                                    {allAudioTracks.length === 0 ? (
+                                        <span className="block text-red-400 mt-1">⚠ No hay pistas de audio cargadas en el proyecto</span>
+                                    ) : vocalTracks.length > 0 ? (
+                                        <span className="block text-purple-400/90 mt-1">🎙️ {vocalTracks.length} canal{vocalTracks.length > 1 ? 'es' : ''} de voz detectado{vocalTracks.length > 1 ? 's' : ''}</span>
+                                    ) : (
+                                        <span className="block text-gray-400 mt-1">🎵 {allAudioTracks.length} pista{allAudioTracks.length > 1 ? 's' : ''} de audio disponible{allAudioTracks.length > 1 ? 's' : ''}</span>
+                                    )}
                                 </p>
                             </div>
                         </button>
@@ -367,14 +473,21 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                         {/* Opción 2: Insertar texto + alineación IA */}
                         <button
                             onClick={() => { setIsManualWithoutAI(false); setView('manual-paste'); }}
-                            className="group flex items-start gap-4 p-5 rounded-xl border border-blue-700/50 bg-blue-900/20 hover:bg-blue-900/40 hover:border-blue-600 transition-all text-left"
+                            disabled={allAudioTracks.length === 0}
+                            className="group flex items-start gap-4 p-5 rounded-xl border border-blue-700/50 bg-blue-900/20 hover:bg-blue-900/40 hover:border-blue-600 transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             <div className="w-12 h-12 rounded-xl bg-blue-700/40 group-hover:bg-blue-700/60 flex items-center justify-center text-2xl shrink-0 transition-colors">📋</div>
                             <div>
                                 <h3 className="text-white font-bold text-sm mb-1">Insertar letra y alinear con IA</h3>
                                 <p className="text-blue-300/80 text-xs leading-relaxed">
                                     Pegas el texto de la canción y la IA acomoda automáticamente cada frase al momento exacto en el que se canta.
-                                    {!vocalTrack && <span className="block text-yellow-400/80 mt-1">Sin canal de voz: se guardarán sin tiempo para mapear manualmente.</span>}
+                                    {allAudioTracks.length === 0 ? (
+                                        <span className="block text-red-400 mt-1">⚠ No hay pistas de audio cargadas</span>
+                                    ) : vocalTrack ? (
+                                        <span className="block text-blue-400/90 mt-1">🎙️ Canal sugerido: "{vocalTrack.name}"</span>
+                                    ) : (
+                                        <span className="block text-gray-400 mt-1">🎵 Podrás elegir la pista de audio a sincronizar</span>
+                                    )}
                                 </p>
                             </div>
                         </button>
@@ -408,7 +521,7 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
     }
 
     // ──────────────────────────────────────────────────────────
-    // RENDER: selección de canales vocales
+    // RENDER: selección de canales vocales / audio
     // ──────────────────────────────────────────────────────────
     if (view === 'choose-track') {
         const toggleTrack = (id: string) => {
@@ -421,19 +534,23 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
 
         return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-                <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-                    <div className="flex justify-between items-center p-4 border-b border-gray-800 bg-gray-950">
+                <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+                    <div className="flex justify-between items-center p-4 border-b border-gray-800 bg-gray-950 shrink-0">
                         <div className="flex items-center gap-2">
-                            <button onClick={() => setView('choose')} className="text-gray-400 hover:text-white text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors">
+                            <button onClick={() => setView(trackSelectPurpose === 'align' ? 'manual-paste' : 'choose')} className="text-gray-400 hover:text-white text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors">
                                 ← Volver
                             </button>
-                            <h2 className="text-white font-bold text-sm">🎙️ Canal de Voz</h2>
+                            <h2 className="text-white font-bold text-sm">
+                                {trackSelectPurpose === 'align' ? '🎙️ Pista para Alinear Letra' : '🎙️ Pista para Transcribir'}
+                            </h2>
                         </div>
                         <button onClick={onClose} className="text-gray-400 hover:text-white px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition-colors">Cerrar</button>
                     </div>
 
-                    <div className="p-5 flex flex-col gap-3">
-                        <p className="text-gray-400 text-xs mb-1">Selecciona qué canal(es) de voz deseas que la IA analice:</p>
+                    <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-3">
+                        <p className="text-gray-400 text-xs mb-1">
+                            Selecciona qué canal(es) de audio deseas que Gemini analice para detectar la voz:
+                        </p>
 
                         {/* Opción: Auto */}
                         <button
@@ -449,50 +566,122 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                             </div>
                             <div>
                                 <p className="text-white font-bold text-sm">🤖 Automático (recomendado)</p>
-                                <p className="text-gray-400 text-xs">La IA analiza todos los canales de voz detectados a la vez — ideal si tienes varios.</p>
+                                <p className="text-gray-400 text-xs">
+                                    {vocalTracks.length > 0
+                                        ? `Analiza automáticamente ${vocalTracks.length > 1 ? `${vocalTracks.length} canales vocales detectados` : `el canal "${vocalTracks[0].name}"`}.`
+                                        : `Analiza automáticamente la pista principal "${allAudioTracks[0]?.name || ''}".`}
+                                </p>
                             </div>
                         </button>
 
                         {/* Separador */}
                         <div className="flex items-center gap-2">
                             <div className="flex-1 h-px bg-gray-700"/>
-                            <span className="text-gray-500 text-xs">o elegir manualmente</span>
+                            <span className="text-gray-500 text-xs">o elegir pista manualmente</span>
                             <div className="flex-1 h-px bg-gray-700"/>
                         </div>
 
-                        {/* Lista de canales vocales */}
-                        <div className="flex flex-col gap-2">
-                            {vocalTracks.map(track => {
-                                const isSelected = selectedTrackIds.includes(track.id);
-                                return (
-                                    <button
-                                        key={track.id}
-                                        onClick={() => { setUseAutoSelect(false); toggleTrack(track.id); }}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                                            !useAutoSelect && isSelected
-                                                ? 'border-blue-500 bg-blue-900/30 ring-1 ring-blue-500/40'
-                                                : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-                                        }`}
-                                    >
-                                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                                            !useAutoSelect && isSelected
-                                                ? 'border-blue-400 bg-blue-500'
-                                                : 'border-gray-500'
-                                        }`}>
-                                            {!useAutoSelect && isSelected && (
-                                                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
-                                                </svg>
-                                            )}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-white text-sm font-medium truncate">{track.name}</p>
-                                            <p className="text-gray-500 text-xs">{track.buffer ? `${track.buffer.duration.toFixed(1)}s · ${track.buffer.numberOfChannels}ch` : ''}</p>
-                                        </div>
-                                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-900/50 text-purple-300 border border-purple-800/50 shrink-0">Voz</span>
-                                    </button>
-                                );
-                            })}
+                        {/* Canales vocales detectados */}
+                        {vocalTracks.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                                <span className="text-purple-400 text-[11px] font-bold uppercase tracking-wider">Canales de voz sugeridos</span>
+                                {vocalTracks.map(track => {
+                                    const isSelected = selectedTrackIds.includes(track.id);
+                                    const isLead = isLeadTrack(track.name);
+                                    return (
+                                        <button
+                                            key={track.id}
+                                            onClick={() => { setUseAutoSelect(false); toggleTrack(track.id); }}
+                                            className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+                                                !useAutoSelect && isSelected
+                                                    ? 'border-purple-500 bg-purple-900/30 ring-1 ring-purple-500/40'
+                                                    : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                                            }`}
+                                        >
+                                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                                !useAutoSelect && isSelected
+                                                    ? 'border-purple-400 bg-purple-500'
+                                                    : 'border-gray-500'
+                                            }`}>
+                                                {!useAutoSelect && isSelected && (
+                                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-white text-sm font-medium truncate">{track.name}</p>
+                                                <p className="text-gray-500 text-xs">{track.buffer ? `${track.buffer.duration.toFixed(1)}s` : ''}</p>
+                                            </div>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border shrink-0 ${isLead ? 'bg-amber-900/60 text-amber-300 border-amber-700/60' : 'bg-purple-900/50 text-purple-300 border-purple-800/50'}`}>
+                                                {isLead ? '🌟 Voz Principal' : '🎙️ Voz'}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {/* Otras pistas de audio */}
+                        {otherAudioTracks.length > 0 && (
+                            <div className="flex flex-col gap-2 mt-1">
+                                <span className="text-gray-400 text-[11px] font-bold uppercase tracking-wider">
+                                    {vocalTracks.length > 0 ? 'Otras pistas de audio' : 'Pistas de audio disponibles'}
+                                </span>
+                                {otherAudioTracks.map(track => {
+                                    const isSelected = selectedTrackIds.includes(track.id);
+                                    return (
+                                        <button
+                                            key={track.id}
+                                            onClick={() => { setUseAutoSelect(false); toggleTrack(track.id); }}
+                                            className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+                                                !useAutoSelect && isSelected
+                                                    ? 'border-blue-500 bg-blue-900/30 ring-1 ring-blue-500/40'
+                                                    : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                                            }`}
+                                        >
+                                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                                !useAutoSelect && isSelected
+                                                    ? 'border-blue-400 bg-blue-500'
+                                                    : 'border-gray-500'
+                                            }`}>
+                                                {!useAutoSelect && isSelected && (
+                                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-white text-sm font-medium truncate">{track.name}</p>
+                                                <p className="text-gray-500 text-xs">{track.buffer ? `${track.buffer.duration.toFixed(1)}s` : ''}</p>
+                                            </div>
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700 shrink-0">Audio</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 border-t border-gray-800 bg-gray-950 shrink-0">
+                        {/* Selector de Anticipación de lectura */}
+                        <div className="flex items-center justify-between bg-gray-900/90 border border-purple-800/40 px-3 py-2 rounded-xl mb-3">
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm">⏱️</span>
+                                <span className="text-gray-300 text-xs font-medium">Aparecer antes para leer:</span>
+                            </div>
+                            <select
+                                value={leadTime}
+                                onChange={(e) => setLeadTime(parseFloat(e.target.value))}
+                                className="bg-gray-950 text-purple-300 text-xs font-bold rounded-lg border border-purple-700/60 px-2 py-1 outline-none cursor-pointer"
+                            >
+                                <option value={0.5}>0.5s antes</option>
+                                <option value={0.8}>0.8s antes</option>
+                                <option value={1.0}>1.0s antes (Recomendado)</option>
+                                <option value={1.5}>1.5s antes</option>
+                                <option value={2.0}>2.0s antes</option>
+                                <option value={0.0}>0s (Exacto)</option>
+                            </select>
                         </div>
 
                         <button
@@ -500,24 +689,15 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                 if (trackSelectPurpose === 'align') {
                                     handlePasteAndAlign(getSelectedBuffers());
                                 } else {
-                                    handleAISyncTranscribe();
+                                    handleAISyncTranscribe(getSelectedBuffers());
                                 }
                             }}
                             disabled={!canProceed}
-                            className="mt-2 w-full py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-purple-600 hover:bg-purple-500 text-white"
+                            className="w-full py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/40"
                         >
                             {trackSelectPurpose === 'align'
-                                ? useAutoSelect
-                                    ? `✨ Alinear letra con ${vocalTracks.length > 1 ? `${vocalTracks.length} canales` : 'el canal'}`
-                                    : selectedTrackIds.length > 0
-                                        ? `✨ Alinear con ${selectedTrackIds.length} canal${selectedTrackIds.length > 1 ? 'es' : ''} seleccionado${selectedTrackIds.length > 1 ? 's' : ''}`
-                                        : 'Selecciona al menos un canal'
-                                : useAutoSelect
-                                    ? `✨ Analizar ${vocalTracks.length > 1 ? `${vocalTracks.length} canales` : 'el canal'} automáticamente`
-                                    : selectedTrackIds.length > 0
-                                        ? `✨ Analizar ${selectedTrackIds.length} canal${selectedTrackIds.length > 1 ? 'es' : ''} seleccionado${selectedTrackIds.length > 1 ? 's' : ''}`
-                                        : 'Selecciona al menos un canal'
-                            }
+                                ? '✨ Alinear letra con IA'
+                                : '✨ Transcribir y sincronizar con IA'}
                         </button>
                     </div>
                 </div>
@@ -545,18 +725,37 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-wrap justify-between items-center gap-2">
                             <label className="text-gray-300 text-xs font-bold">Pega aquí la letra completa:</label>
-                            <div className="flex items-center gap-2">
-                                <span className="text-gray-400 text-xs">Agrupar en:</span>
-                                <select
-                                    className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-xs rounded border border-gray-700 px-2 py-1 outline-none font-medium"
-                                    value={linesPerBlock}
-                                    onChange={(e) => setLinesPerBlock(Number(e.target.value) as 1 | 2)}
-                                >
-                                    <option value={1}>1 renglón</option>
-                                    <option value={2}>2 renglones</option>
-                                </select>
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-gray-400 text-xs">Agrupar:</span>
+                                    <select
+                                        className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-gray-200 text-xs rounded border border-gray-700 px-2 py-1 outline-none font-medium"
+                                        value={linesPerBlock}
+                                        onChange={(e) => setLinesPerBlock(Number(e.target.value) as 1 | 2)}
+                                    >
+                                        <option value={1}>1 renglón</option>
+                                        <option value={2}>2 renglones</option>
+                                    </select>
+                                </div>
+                                {!isManualWithoutAI && (
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-purple-300 text-xs">⏱️ Anticipar:</span>
+                                        <select
+                                            className="bg-gray-800 hover:bg-gray-700 transition cursor-pointer text-purple-300 text-xs rounded border border-purple-700/60 px-2 py-1 outline-none font-medium"
+                                            value={leadTime}
+                                            onChange={(e) => setLeadTime(parseFloat(e.target.value))}
+                                        >
+                                            <option value={0.5}>0.5s</option>
+                                            <option value={0.8}>0.8s</option>
+                                            <option value={1.0}>1.0s (Recomendado)</option>
+                                            <option value={1.5}>1.5s</option>
+                                            <option value={2.0}>2.0s</option>
+                                            <option value={0.0}>0s</option>
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -578,14 +777,14 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                             <div className="flex items-start gap-3 p-3 rounded-xl bg-blue-950/40 border border-blue-800/40">
                                 <span className="text-blue-400 text-lg shrink-0">✨</span>
                                 <p className="text-blue-300/80 text-xs leading-relaxed">
-                                    Canal de voz detectado: <span className="font-bold text-blue-300">"{vocalTrack.name}"</span>. Al confirmar, la IA alineará automáticamente los bloques con los tiempos correctos del audio.
+                                    Pista sugerida para alinear: <span className="font-bold text-blue-300">"{vocalTrack.name}"</span>. Al continuar podrás confirmar o seleccionar cualquier canal de audio disponible.
                                 </p>
                             </div>
                         ) : (
                             <div className="flex items-start gap-3 p-3 rounded-xl bg-yellow-950/30 border border-yellow-800/30">
                                 <span className="text-yellow-400 text-lg shrink-0">⚠</span>
                                 <p className="text-yellow-300/80 text-xs leading-relaxed">
-                                    No se detectó canal de voz. Los bloques se guardarán sin tiempos y podrás asignarlos manualmente presionando "↓ Mapear".
+                                    No se detectaron pistas con nombres vocales. Al continuar podrás elegir cualquier pista de audio cargada en tu proyecto para que la IA la sincronice.
                                 </p>
                             </div>
                         )}
@@ -602,11 +801,11 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                             onClick={() => {
                                 if (isManualWithoutAI) {
                                     handlePasteManualWithoutAI();
-                                } else if (vocalTracks.length > 0) {
+                                } else if (allAudioTracks.length > 0) {
                                     setTrackSelectPurpose('align');
                                     setView('choose-track');
                                 } else {
-                                    handlePasteAndAlign();
+                                    handlePasteManualWithoutAI();
                                 }
                             }}
                             disabled={!rawText.trim()}
@@ -618,8 +817,8 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                         >
                             {isManualWithoutAI 
                                 ? 'Guardar Bloques (Manual)' 
-                                : vocalTracks.length > 0 
-                                    ? '✨ Seleccionar canal y Alinear' 
+                                : allAudioTracks.length > 0 
+                                    ? '✨ Seleccionar canal y Alinear con IA' 
                                     : 'Guardar Bloques'}
                         </button>
                     </div>
@@ -759,13 +958,25 @@ export const LyricsEditor: React.FC<LyricsEditorProps> = ({ onClose }) => {
                                 >
                                     + Agregar
                                 </button>
-                                {vocalTrack && (
+                                {allAudioTracks.length > 0 && (
                                     <button
-                                        onClick={handleAISyncTranscribe}
-                                        className="px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-500 text-white"
-                                        title="Re-sincronizar todo con IA"
+                                        onClick={() => {
+                                            setTrackSelectPurpose('transcribe');
+                                            setView('choose-track');
+                                        }}
+                                        className="px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-500 text-white flex items-center gap-1 shadow-sm"
+                                        title="Sincronizar letra con IA"
                                     >
-                                        ✨ IA
+                                        ✨ Sincronizar IA
+                                    </button>
+                                )}
+                                {lyrics.length > 0 && lyrics.some(l => l.startTime !== null) && (
+                                    <button
+                                        onClick={() => handleShiftExistingAnticipation(leadTime || 1.0)}
+                                        className="px-2 py-1 bg-purple-900/40 hover:bg-purple-800/60 text-purple-300 rounded text-[10px] sm:text-xs font-bold transition-colors border border-purple-800/50 flex items-center gap-1"
+                                        title={`Adelantar ${leadTime || 1.0}s el inicio de cada frase sincronizada para que aparezca antes`}
+                                    >
+                                        ⏱️ Anticipar (-{leadTime || 1.0}s)
                                     </button>
                                 )}
                                 {deletedHistory.length > 0 && (
