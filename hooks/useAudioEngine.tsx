@@ -23,7 +23,7 @@ export interface LyricsSettings {
 }
 export interface TimelineSection { id: string; label: string; start: number; end: number; color: string; loopMode: 'none' | 'infinite' | 'custom'; loopCount: number; }
 export interface PanelSizes { main: Record<string, number>; left: Record<string, number>; timeline: Record<string, number>; sidebar: Record<string, number>; }
-export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 40, 'sidebar-list': 60 } };
+export const DEFAULT_PANEL_SIZES: PanelSizes = { main: { 'main-left': 75, 'main-right': 25 }, left: { 'left-top': 70, 'left-mixer': 30 }, timeline: { 'tl-lyrics': 30, 'tl-video': 40, 'tl-master': 30 }, sidebar: { 'sidebar-preview': 45, 'sidebar-list': 55 } };
 export const DEFAULT_LYRICS_SETTINGS: LyricsSettings = { align: 'center', position: 'middle', fontSize: 60, fontFamily: 'Montserrat, sans-serif', animation: 'zoom-in', idleAnimation: 'zoom-in-slow', exitAnimation: 'none', kineticMode: 'none', kineticAnimation: 'wave', kineticStagger: 40, kineticExitAnimation: 'wave-out' };
 
 export interface ChordBlock { id: string; chord: string; startTime: number; endTime: number; }

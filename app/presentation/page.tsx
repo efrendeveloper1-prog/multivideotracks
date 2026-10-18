@@ -15,6 +15,7 @@ function PresentationContent() {
     const [lyricsSettings, setLyricsSettings] = useState<LyricsSettings | null>(null);
     const [invertBackground, setInvertBackground] = useState<boolean>(false);
     const [showLyrics, setShowLyrics] = useState<boolean>(true);
+    const [alertMessage, setAlertMessage] = useState<string | null>(null);
     const exitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const exitTargetRef = useRef<string | null>(null);
 
@@ -41,6 +42,10 @@ function PresentationContent() {
                 if (event.data.invertBackground !== undefined) setInvertBackground(event.data.invertBackground);
                 if (event.data.showLyrics !== undefined) setShowLyrics(event.data.showLyrics);
                 if (event.data.videoOpacity !== undefined) video.style.opacity = event.data.videoOpacity.toString();
+            } else if (event.data.type === 'alert') {
+                setAlertMessage(event.data.text || null);
+            } else if (event.data.type === 'clear-alert') {
+                setAlertMessage(null);
             }
         };
 
@@ -146,6 +151,15 @@ function PresentationContent() {
                         invertBackground={invertBackground}
                         isExiting={isExiting}
                     />
+                </div>
+            )}
+
+            {/* Alert Banner Overlay */}
+            {alertMessage && (
+                <div className="absolute bottom-10 inset-x-8 z-[60] flex items-center justify-center pointer-events-none">
+                    <div className="bg-amber-500/95 text-black font-extrabold text-xl md:text-3xl px-8 py-3 rounded-xl shadow-2xl border-2 border-white tracking-wide animate-pulse uppercase">
+                        ⚠️ {alertMessage}
+                    </div>
                 </div>
             )}
         </div>

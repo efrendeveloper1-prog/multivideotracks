@@ -16,6 +16,7 @@ import { Group, Panel, Separator, PanelImperativeHandle } from 'react-resizable-
 import { LyricsRenderer } from './LyricsRenderer';
 import { AudioSettingsModal } from './AudioSettingsModal';
 import { RealTimeRecordingWaveform } from './RealTimeRecordingWaveform';
+import { PreviewTransportBar } from './PreviewTransportBar';
 import { transposeKey } from '@/utils/chordShapes';
 
 const DividerHandle: React.FC<{ orientation: 'horizontal' | 'vertical', onDoubleClick?: () => void }> = ({ orientation, onDoubleClick }) => {
@@ -131,6 +132,51 @@ const EditorContent: React.FC = () => {
     const [resizingFade, setResizingFade] = useState<{ type: 'in' | 'out', startX: number, initialValue: number } | null>(null);
     const [hoveredFadeHandle, setHoveredFadeHandle] = useState<'in' | 'out' | null>(null);
     const [fadeContextMenu, setFadeContextMenu] = useState<{ visible: boolean; x: number; y: number; type: 'in' | 'out' } | null>(null);
+    const [showAlertPopover, setShowAlertPopover] = useState(false);
+    const [alertInput, setAlertInput] = useState('');
+    const [activeAlert, setActiveAlert] = useState<string | null>(null);
+    const alertPopoverRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (alertPopoverRef.current && !alertPopoverRef.current.contains(e.target as Node)) {
+                setShowAlertPopover(false);
+            }
+        };
+        if (showAlertPopover) {
+            window.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => window.removeEventListener('mousedown', handleClickOutside);
+    }, [showAlertPopover]);
+
+    const handleSendAlert = (textToSend?: string) => {
+        const text = textToSend !== undefined ? textToSend : alertInput.trim();
+        if (!text) return;
+        const channel1 = new BroadcastChannel('second-screen-video');
+        channel1.postMessage({ type: 'alert', text });
+        channel1.close();
+
+        const channel2 = new BroadcastChannel('stage-screen');
+        channel2.postMessage({ type: 'alert', text });
+        channel2.close();
+
+        setActiveAlert(text);
+        setShowAlertPopover(false);
+    };
+
+    const handleClearAlert = () => {
+        const channel1 = new BroadcastChannel('second-screen-video');
+        channel1.postMessage({ type: 'clear-alert' });
+        channel1.close();
+
+        const channel2 = new BroadcastChannel('stage-screen');
+        channel2.postMessage({ type: 'clear-alert' });
+        channel2.close();
+
+        setActiveAlert(null);
+        setAlertInput('');
+        setShowAlertPopover(false);
+    };
 
     useEffect(() => {
         const closeMenu = () => setFadeContextMenu(null);
@@ -273,7 +319,57 @@ const EditorContent: React.FC = () => {
 
     const [showLyricsEditor, setShowLyricsEditor] = useState(false);
     const [showAudioSettings, setShowAudioSettings] = useState(false);
-    const [showChordsTrack, setShowChordsTrack] = useState(true);
+
+    // View panels visibility states with localStorage persistence
+    const [showChordsTrack, setShowChordsTrack] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('view_showChordsTrack');
+            if (saved !== null) return saved === 'true';
+        }
+        return true;
+    });
+    const [showLyricsTrack, setShowLyricsTrack] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('view_showLyricsTrack');
+            if (saved !== null) return saved === 'true';
+        }
+        return true;
+    });
+    const [showPreviewPanel, setShowPreviewPanel] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('view_showPreviewPanel');
+            if (saved !== null) return saved === 'true';
+        }
+        return true;
+    });
+    const [showPlaylistPanel, setShowPlaylistPanel] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('view_showPlaylistPanel');
+            if (saved !== null) return saved === 'true';
+        }
+        return true;
+    });
+    const [showTransportBar, setShowTransportBar] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('view_showTransportBar');
+            if (saved !== null) return saved === 'true';
+        }
+        return true;
+    });
+    const [showViewMenu, setShowViewMenu] = useState(false);
+    const viewMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (viewMenuRef.current && !viewMenuRef.current.contains(e.target as Node)) {
+                setShowViewMenu(false);
+            }
+        };
+        if (showViewMenu) {
+            window.addEventListener('mousedown', handleClickOutside);
+        }
+        return () => window.removeEventListener('mousedown', handleClickOutside);
+    }, [showViewMenu]);
 
     const [correctedKey, setCorrectedKey] = useState<string>('--');
 
@@ -387,7 +483,7 @@ const EditorContent: React.FC = () => {
     }, [lyrics, currentTime]);
     const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
 
-    const hasLyrics = lyrics.length > 0;
+    const hasLyrics = lyrics.length > 0 && showLyricsTrack;
     const hasChords = duration > 0 && showChordsTrack;
     const videoTrackInfo = tracks.find(t => t.name === "VIDEO TRACK");
     const hasVideoTrack = !!videoTrackInfo;
@@ -886,13 +982,6 @@ const EditorContent: React.FC = () => {
                         LYRICS
                     </button>
                     <button 
-                        onClick={() => setShowChordsTrack(!showChordsTrack)}
-                        className={`${showChordsTrack ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors`}
-                        title={showChordsTrack ? "Ocultar pista de acordes" : "Mostrar pista de acordes"}
-                    >
-                        ACORDES
-                    </button>
-                    <button 
                         onClick={() => setShowAudioSettings(true)}
                         className={`${showAudioSettings ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors flex items-center gap-1`}
                         title="Configuración de Audio"
@@ -902,6 +991,163 @@ const EditorContent: React.FC = () => {
                         </svg>
                         <span>AUDIO</span>
                     </button>
+
+                    {/* Menú VER (Habilitar / Deshabilitar Paneles) */}
+                    <div className="relative" ref={viewMenuRef}>
+                        <button 
+                            onClick={() => setShowViewMenu(prev => !prev)}
+                            className={`${showViewMenu ? 'bg-zinc-700 text-white shadow-sm ring-1 ring-zinc-500' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'} px-2 py-1 rounded text-[10px] sm:text-xs font-bold transition-colors flex items-center gap-1.5`}
+                            title="Ver / Ocultar Paneles"
+                        >
+                            <svg className="w-3.5 h-3.5 text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg>
+                            <span>VER</span>
+                            <svg className={`w-3 h-3 text-gray-400 transition-transform duration-200 ${showViewMenu ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M6 9l6 6 6-6" />
+                            </svg>
+                        </button>
+
+                        {showViewMenu && (
+                            <div className="absolute top-full left-0 mt-1.5 bg-[#18181b] border border-zinc-700/80 rounded-xl p-2 shadow-2xl w-64 z-[80] flex flex-col gap-1 text-xs">
+                                <div className="px-2 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-zinc-800/80 flex items-center justify-between mb-1">
+                                    <span>VISTA DE PANELES</span>
+                                    <span className="text-[9px] text-zinc-500 font-normal">Habilitar / Ocultar</span>
+                                </div>
+
+                                {/* 1. Track de Acordes */}
+                                <button
+                                    onClick={() => {
+                                        setShowChordsTrack(prev => {
+                                            const next = !prev;
+                                            localStorage.setItem('view_showChordsTrack', String(next));
+                                            return next;
+                                        });
+                                    }}
+                                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-gray-200 hover:bg-zinc-800 transition-colors w-full group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-4 text-center font-mono text-emerald-400 font-bold">♪</span>
+                                        <span className="text-[11px] font-medium">Track de Acordes</span>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                        showChordsTrack 
+                                            ? 'bg-emerald-600 border-emerald-500 text-white' 
+                                            : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                    }`}>
+                                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </div>
+                                </button>
+
+                                {/* 2. Track de Lyrics */}
+                                <button
+                                    onClick={() => {
+                                        setShowLyricsTrack(prev => {
+                                            const next = !prev;
+                                            localStorage.setItem('view_showLyricsTrack', String(next));
+                                            return next;
+                                        });
+                                    }}
+                                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-gray-200 hover:bg-zinc-800 transition-colors w-full group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-4 text-center text-blue-400 font-bold text-[10px]">TXT</span>
+                                        <span className="text-[11px] font-medium">Track de Letras (Lyrics)</span>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                        showLyricsTrack 
+                                            ? 'bg-blue-600 border-blue-500 text-white' 
+                                            : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                    }`}>
+                                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </div>
+                                </button>
+
+                                {/* 3. Panel de Preview */}
+                                <button
+                                    onClick={() => {
+                                        setShowPreviewPanel(prev => {
+                                            const next = !prev;
+                                            localStorage.setItem('view_showPreviewPanel', String(next));
+                                            return next;
+                                        });
+                                    }}
+                                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-gray-200 hover:bg-zinc-800 transition-colors w-full group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-4 text-center text-purple-400 font-bold">🎬</span>
+                                        <span className="text-[11px] font-medium">Panel del Preview</span>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                        showPreviewPanel 
+                                            ? 'bg-purple-600 border-purple-500 text-white' 
+                                            : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                    }`}>
+                                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </div>
+                                </button>
+
+                                {/* 4. El Playlist */}
+                                <button
+                                    onClick={() => {
+                                        setShowPlaylistPanel(prev => {
+                                            const next = !prev;
+                                            localStorage.setItem('view_showPlaylistPanel', String(next));
+                                            return next;
+                                        });
+                                    }}
+                                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-gray-200 hover:bg-zinc-800 transition-colors w-full group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-4 text-center text-amber-400 font-bold">📋</span>
+                                        <span className="text-[11px] font-medium">Lista de Canciones (Playlist)</span>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                        showPlaylistPanel 
+                                            ? 'bg-amber-600 border-amber-500 text-white' 
+                                            : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                    }`}>
+                                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </div>
+                                </button>
+
+                                {/* 5. Barra Inferior de Transporte (Play) */}
+                                <button
+                                    onClick={() => {
+                                        setShowTransportBar(prev => {
+                                            const next = !prev;
+                                            localStorage.setItem('view_showTransportBar', String(next));
+                                            return next;
+                                        });
+                                    }}
+                                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-gray-200 hover:bg-zinc-800 transition-colors w-full group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-4 text-center text-cyan-400 font-bold">▶</span>
+                                        <span className="text-[11px] font-medium">Barra de Transporte (Play)</span>
+                                    </div>
+                                    <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                        showTransportBar 
+                                            ? 'bg-cyan-600 border-cyan-500 text-white' 
+                                            : 'border-zinc-600 bg-zinc-900 text-transparent'
+                                    }`}>
+                                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                    </div>
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Header Center Controls: BPM, Key, Count-In, and Timer */}
@@ -1184,10 +1430,12 @@ const EditorContent: React.FC = () => {
             {/* Main Workspace */}
             <div className="flex-1 flex overflow-hidden relative min-h-0">
                 <Group 
-                    key={`main-${layoutVersion}`} 
+                    key={`main-${layoutVersion}-${showPreviewPanel || showPlaylistPanel}`} 
                     orientation="horizontal" 
-                    onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, main: sizes }))}
-                    defaultLayout={panelSizes.main}
+                    onLayoutChanged={(sizes) => {
+                        if (sizes.length === 2) setPanelSizes(prev => ({ ...prev, main: sizes }));
+                    }}
+                    defaultLayout={(showPreviewPanel || showPlaylistPanel) ? panelSizes.main : undefined}
                 >
                     <Panel id="main-left" minSize={20} className="flex flex-col min-w-0 min-h-0 relative z-10">
                         <Group 
@@ -1792,101 +2040,198 @@ const EditorContent: React.FC = () => {
                         </Group>
                     </Panel>
 
-                    <DividerHandle orientation="horizontal" onDoubleClick={toggleSidebar} />
+                    {/* Right: Sidebar (Preview and/or Playlist) */}
+                    {(showPreviewPanel || showPlaylistPanel) && (
+                        <>
+                            <DividerHandle orientation="horizontal" onDoubleClick={toggleSidebar} />
 
-                    {/* Right: Sidebar */}
-                    <Panel id="main-right" minSize={15} collapsible panelRef={sidebarPanelRef} className="w-full bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
-                        <Group 
-                            key={`sidebar-${layoutVersion}`} 
-                            orientation="vertical" 
-                            onLayoutChanged={(sizes) => setPanelSizes(prev => ({ ...prev, sidebar: sizes }))}
-                            defaultLayout={panelSizes.sidebar}
-                        >
-                            {/* Video Player Preview */}
-                            <Panel id="sidebar-preview" minSize={10} className="flex flex-col relative shrink-0">
-                                <div className={`flex-1 ${invertBackground ? 'bg-white' : 'bg-black'} relative group transition-colors duration-500 overflow-hidden`}>
-                        {videoSrc ? (
-                            <video
-                                ref={videoRef}
-                                src={videoSrc || undefined}
-                                className="w-full h-full object-contain"
-                                style={{ opacity: videoOpacity }}
-                                muted
-                                loop
-                                onTimeUpdate={(e) => {
-                                    // Sycn timeline if needed - but usually controlled by loop
-                                }}
-                            />
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">
-                                No Video
-                            </div>
-                        )}
-                        {/* Black overlay during cut gaps */}
-                        {isInCutRegion && (
-                            <div className="absolute inset-0 bg-black z-20 pointer-events-none" />
-                        )}
-                        
-                        <div className="absolute top-1 right-1 flex gap-1 z-30">
-                            <button 
-                                onClick={() => setShowLyrics(!showLyrics)}
-                                className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${showLyrics ? 'bg-blue-600 text-white border border-blue-500' : 'bg-gray-800 text-gray-400 border border-gray-700'} transition-colors`}
-                                title="Mostrar/Ocultar Letras en Preview"
-                            >
-                                TXT
-                            </button>
-                            <div className="bg-black/60 px-1.5 py-0.5 rounded text-[8px] text-gray-400 border border-gray-800">Preview</div>
-                        </div>
+                            <Panel id="main-right" minSize={15} collapsible panelRef={sidebarPanelRef} className="w-full bg-gray-900 border-t sm:border-t-0 sm:border-l border-gray-800 flex flex-col z-20 shadow-xl shrink-0 max-h-[40vh] sm:max-h-none">
+                                <Group 
+                                    key={`sidebar-${layoutVersion}-${showPreviewPanel}-${showPlaylistPanel}`} 
+                                    orientation="vertical" 
+                                    onLayoutChanged={(sizes) => {
+                                        if (sizes.length === 2) setPanelSizes(prev => ({ ...prev, sidebar: sizes }));
+                                    }}
+                                    defaultLayout={showPreviewPanel && showPlaylistPanel ? panelSizes.sidebar : undefined}
+                                >
+                                    {/* Video Player Preview */}
+                                    {showPreviewPanel && (
+                                        <Panel id="sidebar-preview" minSize={10} className="flex flex-col relative shrink-0">
+                                            <div className={`flex-1 ${invertBackground ? 'bg-white' : 'bg-black'} relative group transition-colors duration-500 overflow-hidden`}>
+                                                {videoSrc ? (
+                                                    <video
+                                                        ref={videoRef}
+                                                        src={videoSrc || undefined}
+                                                        className="w-full h-full object-contain"
+                                                        style={{ opacity: videoOpacity }}
+                                                        muted
+                                                        loop
+                                                        onTimeUpdate={(e) => {
+                                                            // Sycn timeline if needed - but usually controlled by loop
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center text-gray-600 text-[10px]">
+                                                        No Video
+                                                    </div>
+                                                )}
+                                                {/* Black overlay during cut gaps */}
+                                                {isInCutRegion && (
+                                                    <div className="absolute inset-0 bg-black z-20 pointer-events-none" />
+                                                )}
 
-                        {/* Lyrics Preview Overlay */}
-                        {showLyrics && activeLyricText && (
-                            <div className={`absolute inset-x-0 flex flex-col z-20 pointer-events-none px-2
-                                ${lyricsSettings.position === 'top' ? 'top-6 sm:top-8 justify-start' : 
-                                  lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
-                                  'bottom-6 sm:bottom-8 justify-end'}`}
-                            >
-                                <LyricsRenderer 
-                                    text={activeLyricText}
-                                    settings={lyricsSettings}
-                                    invertBackground={invertBackground}
-                                    isExiting={false}
-                                    scale={0.25}
-                                />
-                            </div>
-                        )}
+                                                {/* Botones de Pantallas (Audiencia, Escenario, Clear, Invert) - Top Left */}
+                                                <div className="absolute top-1.5 left-1.5 z-30">
+                                                    <SecondScreen />
+                                                </div>
+                                                
+                                                <div className="absolute top-1.5 right-1.5 flex items-center gap-1.5 z-30">
+                                                    {/* Icono de Letras Visibles en Pantalla (Reemplaza a TXT) */}
+                                                    <button 
+                                                        onClick={() => setShowLyrics(!showLyrics)}
+                                                        className={`p-1 rounded transition-all flex items-center justify-center ${
+                                                            showLyrics 
+                                                                ? 'bg-[#0078d7] text-white shadow-md ring-1 ring-blue-400' 
+                                                                : 'bg-black/60 text-gray-400 hover:text-white border border-gray-700/80 hover:bg-gray-800'
+                                                        }`}
+                                                        title={showLyrics ? "Letras visibles en pantalla (Activo - Clic para ocultar)" : "Activar texto/letras en pantalla"}
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                            <rect x="3" y="5" width="18" height="14" rx="2" />
+                                                            <line x1="7" y1="10" x2="17" y2="10" />
+                                                            <line x1="7" y1="14" x2="13" y2="14" />
+                                                        </svg>
+                                                    </button>
 
-                        {/* Audio Meter Overlay */}
-                        <div className="absolute top-1 left-2 bottom-1 z-10 flex flex-col items-center justify-end pb-1 pointer-events-none opacity-80">
-                            <AudioMeter />
-                            <div className="flex gap-1.5 text-[6px] text-gray-400 font-bold mt-1">
-                                <span>L</span><span>R</span>
-                            </div>
-                        </div>
-                                </div>
+                                                    {/* Icono de Enviar Alerta a Pantalla (Megáfono - Enseguida de Letras) */}
+                                                    <div className="relative" ref={alertPopoverRef}>
+                                                        <button 
+                                                            onClick={() => setShowAlertPopover(!showAlertPopover)}
+                                                            className={`p-1 rounded transition-all flex items-center justify-center ${
+                                                                activeAlert 
+                                                                    ? 'bg-amber-600 text-white shadow-md ring-1 ring-amber-400 animate-pulse' 
+                                                                    : 'bg-black/60 text-gray-400 hover:text-white border border-gray-700/80 hover:bg-gray-800'
+                                                            }`}
+                                                            title={activeAlert ? `Alerta activa: "${activeAlert}" (Clic para gestionar)` : "Enviar Alerta a Pantalla"}
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                <path d="m3 11 18-5v12L3 13v-2z" />
+                                                                <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+                                                            </svg>
+                                                        </button>
+
+                                                        {/* Popover para Alerta */}
+                                                        {showAlertPopover && (
+                                                            <div className="absolute top-full right-0 mt-1 w-64 bg-[#18181b] border border-zinc-700 rounded-lg shadow-2xl p-2.5 z-50 text-xs flex flex-col gap-2">
+                                                                <div className="flex items-center justify-between text-gray-300 font-semibold text-[11px] border-b border-zinc-800 pb-1">
+                                                                    <span className="flex items-center gap-1.5">
+                                                                        <span>📢</span> Alerta a Pantalla
+                                                                    </span>
+                                                                    {activeAlert && (
+                                                                        <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono font-bold animate-pulse">
+                                                                            ACTIVA
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Texto del aviso o alerta..."
+                                                                    value={alertInput}
+                                                                    onChange={(e) => setAlertInput(e.target.value)}
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === 'Enter') {
+                                                                            e.preventDefault();
+                                                                            handleSendAlert();
+                                                                        }
+                                                                    }}
+                                                                    className="w-full px-2 py-1 bg-zinc-900 border border-zinc-700 rounded text-white text-xs placeholder-gray-500 outline-none focus:border-amber-500"
+                                                                    autoFocus
+                                                                />
+
+                                                                <div className="flex gap-1.5 justify-end">
+                                                                    {activeAlert && (
+                                                                        <button
+                                                                            onClick={handleClearAlert}
+                                                                            className="px-2 py-1 bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800/60 rounded text-[10px] font-semibold transition-colors"
+                                                                        >
+                                                                            Quitar Alerta
+                                                                        </button>
+                                                                    )}
+                                                                    <button
+                                                                        onClick={() => handleSendAlert()}
+                                                                        disabled={!alertInput.trim()}
+                                                                        className="px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:hover:bg-amber-600 text-white rounded text-[10px] font-bold transition-colors shadow-sm"
+                                                                    >
+                                                                        Enviar
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="bg-black/60 px-1.5 py-0.5 rounded text-[8px] text-gray-400 border border-gray-800 select-none">
+                                                        Preview
+                                                    </div>
+                                                </div>
+
+                                                {/* Lyrics Preview Overlay */}
+                                                {showLyrics && activeLyricText && (
+                                                    <div className={`absolute inset-x-0 flex flex-col z-20 pointer-events-none px-2
+                                                        ${lyricsSettings.position === 'top' ? 'top-6 sm:top-8 justify-start' : 
+                                                          lyricsSettings.position === 'middle' ? 'inset-y-0 justify-center' : 
+                                                          'bottom-6 sm:bottom-8 justify-end'}`}
+                                                    >
+                                                        <LyricsRenderer 
+                                                            text={activeLyricText}
+                                                            settings={lyricsSettings}
+                                                            invertBackground={invertBackground}
+                                                            isExiting={false}
+                                                            scale={0.25}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {/* Audio Meter Overlay */}
+                                                <div className="absolute bottom-1.5 left-2 z-10 flex flex-col items-center pointer-events-none opacity-80">
+                                                    <AudioMeter />
+                                                    <div className="flex gap-1.5 text-[6px] text-gray-400 font-bold mt-1">
+                                                        <span>L</span><span>R</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Preview Transport and Progress Bar */}
+                                            <PreviewTransportBar />
+                                        </Panel>
+                                    )}
+
+                                    {showPreviewPanel && showPlaylistPanel && (
+                                        <DividerHandle orientation="vertical" />
+                                    )}
+
+                                    {/* Song List / Playlist */}
+                                    {showPlaylistPanel && (
+                                        <Panel id="sidebar-list" minSize={10} className="flex flex-col min-h-0">
+                                            {/* Song List (fills full available space) */}
+                                            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                                                <SongList />
+                                            </div>
+                                        </Panel>
+                                    )}
+                                </Group>
                             </Panel>
-
-                            <DividerHandle orientation="vertical" />
-
-                            <Panel id="sidebar-list" minSize={10} className="flex flex-col min-h-0">
-                                {/* Second Screen Button */}
-                                <div className="px-2 py-1 border-b border-gray-800 shrink-0">
-                                    <SecondScreen />
-                                </div>
-
-                                {/* Song List (fills remaining) */}
-                                <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                                    <SongList />
-                                </div>
-                            </Panel>
-                        </Group>
-                    </Panel>
+                        </>
+                    )}
                 </Group>
             </div>
 
             {/* Footer: Transport Controls */}
-            <div className="relative h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
-                <TransportControls />
-            </div>
+            {showTransportBar && (
+                <div className="relative h-20 sm:h-28 bg-gray-900 border-t border-gray-800 p-1 sm:p-2 z-30 shrink-0">
+                    <TransportControls />
+                </div>
+            )}
 
             {/* Modals */}
             {showLyricsEditor && <LyricsEditor onClose={() => setShowLyricsEditor(false)} />}

@@ -8,10 +8,14 @@ function StageContent() {
     const [currentTime, setCurrentTime] = useState<number>(0);
     const [duration, setDuration] = useState<number>(0);
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
-    const [systemTime, setSystemTime] = useState<Date>(new Date());
+    const [alertMessage, setAlertMessage] = useState<string | null>(null);
+    const [mounted, setMounted] = useState<boolean>(false);
+    const [systemTime, setSystemTime] = useState<Date | null>(null);
 
-    // Update local system clock every second
+    // Update local system clock every second only after mounting on client
     useEffect(() => {
+        setMounted(true);
+        setSystemTime(new Date());
         const interval = setInterval(() => {
             setSystemTime(new Date());
         }, 1000);
@@ -32,6 +36,10 @@ function StageContent() {
                 if (event.data.currentTime !== undefined) setCurrentTime(event.data.currentTime);
                 if (event.data.duration !== undefined) setDuration(event.data.duration);
                 if (event.data.isPlaying !== undefined) setIsPlaying(event.data.isPlaying);
+            } else if (event.data.type === 'alert') {
+                setAlertMessage(event.data.text || null);
+            } else if (event.data.type === 'clear-alert') {
+                setAlertMessage(null);
             }
         };
 
@@ -49,7 +57,8 @@ function StageContent() {
     };
 
     // Helper to format system clock (HH:MM:SS AM/PM)
-    const formatSystemTime = (date: Date) => {
+    const formatSystemTime = (date: Date | null) => {
+        if (!date) return '--:--:--';
         return date.toLocaleTimeString([], { 
             hour: '2-digit', 
             minute: '2-digit', 
@@ -63,7 +72,7 @@ function StageContent() {
 
     return (
         <div
-            className="w-screen h-screen flex flex-col justify-between p-8 md:p-12 select-none bg-black text-white font-sans overflow-hidden"
+            className="w-screen h-screen flex flex-col justify-between p-8 md:p-12 select-none bg-black text-white font-sans overflow-hidden relative"
             onDoubleClick={() => {
                 if (!document.fullscreenElement) {
                     document.documentElement.requestFullscreen().catch(() => {});
@@ -72,6 +81,15 @@ function StageContent() {
                 }
             }}
         >
+            {/* Alert Banner Overlay */}
+            {alertMessage && (
+                <div className="fixed top-6 inset-x-8 z-[60] flex items-center justify-center pointer-events-none">
+                    <div className="bg-amber-500 text-black font-black text-2xl md:text-4xl px-8 py-3.5 rounded-xl shadow-2xl border-4 border-white tracking-wide animate-pulse uppercase">
+                        ⚠️ {alertMessage}
+                    </div>
+                </div>
+            )}
+
             {/* Top Section: Current Lyric */}
             <div className="flex flex-col flex-[1.2] items-center justify-center min-h-0 px-4">
                 <span className="text-zinc-500 text-xs md:text-sm uppercase tracking-widest font-bold mb-4 shrink-0">
@@ -113,8 +131,8 @@ function StageContent() {
 
                 {/* System Clock (Local Time) */}
                 <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 md:p-6 flex flex-col justify-center items-center">
-                    <span className="text-zinc-100 font-mono text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-bold tracking-tight">
-                        {formatSystemTime(systemTime)}
+                    <span suppressHydrationWarning className="text-zinc-100 font-mono text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-bold tracking-tight">
+                        {mounted && systemTime ? formatSystemTime(systemTime) : '--:--:--'}
                     </span>
                     <span className="text-zinc-400 text-[10px] md:text-sm uppercase tracking-widest font-semibold mt-2">
                         HORA LOCAL
