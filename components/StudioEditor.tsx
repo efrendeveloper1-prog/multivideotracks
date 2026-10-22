@@ -2082,7 +2082,7 @@ const EditorContent: React.FC = () => {
 
                                                 {/* Botones de Pantallas (Audiencia, Escenario, Clear, Invert) - Top Left */}
                                                 <div className="absolute top-1.5 left-1.5 z-30">
-                                                    <SecondScreen />
+                                                    <SecondScreen activeLyricBlock={activeLyricBlock} activeLyricText={activeLyricText} />
                                                 </div>
                                                 
                                                 <div className="absolute top-1.5 right-1.5 flex items-center gap-1.5 z-30">

@@ -26,22 +26,29 @@ function PresentationContent() {
 
         channel.onmessage = (event) => {
             const video = videoRef.current;
-            if (!video) return;
 
             if (event.data.type === 'sync') {
-                if (event.data.src !== undefined && video.src !== event.data.src) {
-                    if (event.data.src) { video.src = event.data.src; video.load(); }
-                    else { video.removeAttribute('src'); video.load(); }
+                if (video) {
+                    if (event.data.src !== undefined && video.src !== event.data.src) {
+                        if (event.data.src) { video.src = event.data.src; video.load(); }
+                        else { video.removeAttribute('src'); video.load(); }
+                    }
+                    if (event.data.currentTime !== undefined) {
+                        const drift = Math.abs(video.currentTime - event.data.currentTime);
+                        if (drift > 0.5) video.currentTime = event.data.currentTime;
+                    }
+                    if (event.data.playing !== undefined) {
+                        if (event.data.playing && video.paused) video.play().catch(() => {});
+                        else if (!event.data.playing && !video.paused) video.pause();
+                    }
+                    if (event.data.videoOpacity !== undefined) {
+                        video.style.opacity = event.data.videoOpacity.toString();
+                    }
                 }
-                const drift = Math.abs(video.currentTime - event.data.currentTime);
-                if (drift > 0.5) video.currentTime = event.data.currentTime;
-                if (event.data.playing && video.paused) video.play().catch(() => {});
-                else if (!event.data.playing && !video.paused) video.pause();
                 if (event.data.currentLyric !== undefined) setCurrentLyric(event.data.currentLyric);
                 if (event.data.lyricsSettings !== undefined) setLyricsSettings(event.data.lyricsSettings);
                 if (event.data.invertBackground !== undefined) setInvertBackground(event.data.invertBackground);
                 if (event.data.showLyrics !== undefined) setShowLyrics(event.data.showLyrics);
-                if (event.data.videoOpacity !== undefined) video.style.opacity = event.data.videoOpacity.toString();
             } else if (event.data.type === 'alert') {
                 setAlertMessage(event.data.text || null);
             } else if (event.data.type === 'clear-alert') {
@@ -65,34 +72,29 @@ function PresentationContent() {
     // Handle lyrics transitions
     useEffect(() => {
         if (currentLyric !== displayedLyric) {
-            if (!displayedLyric) {
+            if (exitTimeoutRef.current) {
+                clearTimeout(exitTimeoutRef.current);
+                exitTimeoutRef.current = null;
+            }
+
+            // When a new lyric arrives (non-null), show it IMMEDIATELY so it is 100% in sync with Preview and Stage
+            if (currentLyric) {
                 setDisplayedLyric(currentLyric);
                 setIsExiting(false);
                 exitTargetRef.current = null;
-            } else if (isExiting) {
-                // If we are currently exiting, check if the incoming currentLyric is different
-                // from the target lyric of the exit animation.
-                if (currentLyric !== exitTargetRef.current) {
-                    // Abort transition: update displayed lyric immediately to the new target
-                    if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
-                    setDisplayedLyric(currentLyric);
-                    setIsExiting(false);
-                    exitTargetRef.current = null;
-                }
-                // If currentLyric === exitTargetRef.current, do nothing (let the exit animation complete)
             } else {
+                // When lyrics clear (currentLyric is null), run exit animation if configured
                 const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
                 const kineticExit = lyricsSettings?.kineticExitAnimation;
                 const hasKineticExit = isKinetic && kineticExit && kineticExit !== 'none';
                 const hasClassicExit = lyricsSettings?.exitAnimation && lyricsSettings.exitAnimation !== 'none';
 
-                if (hasKineticExit || hasClassicExit) {
+                if ((hasKineticExit || hasClassicExit) && displayedLyric) {
                     setIsExiting(true);
-                    exitTargetRef.current = currentLyric;
-                    if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
+                    exitTargetRef.current = null;
 
                     let exitDur = 400; // synced to tailwind exit-down 0.4s
-                    if (hasKineticExit && displayedLyric) {
+                    if (hasKineticExit) {
                         const stagger = lyricsSettings?.kineticStagger ?? 40;
                         const unitCount = lyricsSettings?.kineticMode === 'by-letter'
                             ? displayedLyric.replace(/\s/g, '').length
@@ -101,18 +103,17 @@ function PresentationContent() {
                     }
 
                     exitTimeoutRef.current = setTimeout(() => {
-                        setDisplayedLyric(currentLyric);
+                        setDisplayedLyric(null);
                         setIsExiting(false);
-                        exitTargetRef.current = null;
                     }, exitDur);
                 } else {
-                    setDisplayedLyric(currentLyric);
+                    setDisplayedLyric(null);
                     setIsExiting(false);
                     exitTargetRef.current = null;
                 }
             }
         }
-    }, [currentLyric, displayedLyric, lyricsSettings, isExiting]);
+    }, [currentLyric, displayedLyric, lyricsSettings]);
 
     const isKinetic = lyricsSettings?.kineticMode && lyricsSettings.kineticMode !== 'none';
 

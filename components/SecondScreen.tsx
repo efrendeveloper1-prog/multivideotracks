@@ -1,9 +1,19 @@
 'use client';
 
-import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { useAudioEngine } from '@/hooks/useAudioEngine';
+import React, { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useAudioEngine, LyricBlock } from '@/hooks/useAudioEngine';
 
-export const SecondScreen: React.FC = () => {
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+export interface SecondScreenProps {
+    activeLyricBlock?: LyricBlock | null;
+    activeLyricText?: string | null;
+}
+
+export const SecondScreen: React.FC<SecondScreenProps> = ({
+    activeLyricBlock: propActiveLyricBlock,
+    activeLyricText: propActiveLyricText
+}) => {
     const { 
         tracks, 
         isPlaying, 
@@ -28,7 +38,46 @@ export const SecondScreen: React.FC = () => {
     const isActive = !!secondWindow && !secondWindow.closed;
     const isStageActive = !!stageWindow && !stageWindow.closed;
 
-    const lyricsRef = useRef(lyrics);
+    // Pre-sort timed lyrics
+    const timedLyrics = useMemo(() => {
+        return lyrics
+            .filter(l => l.startTime !== null)
+            .sort((a, b) => a.startTime! - b.startTime!);
+    }, [lyrics]);
+
+    // Active lyric block fallback calculation if not passed via props
+    const fallbackActiveBlock = useMemo(() => {
+        if (propActiveLyricBlock !== undefined) return propActiveLyricBlock;
+        const mostRecentBlock = lyrics
+            .filter(l => l.startTime !== null && l.startTime <= currentTime)
+            .sort((a, b) => b.startTime! - a.startTime!)[0];
+            
+        if (mostRecentBlock && mostRecentBlock.endTime && mostRecentBlock.endTime < currentTime) {
+            return null;
+        }
+        return mostRecentBlock || null;
+    }, [propActiveLyricBlock, lyrics, currentTime]);
+
+    const activeBlock = propActiveLyricBlock !== undefined ? propActiveLyricBlock : fallbackActiveBlock;
+    const activeText = propActiveLyricText !== undefined ? propActiveLyricText : (activeBlock ? activeBlock.text : null);
+
+    // Calculate next lyric for Stage Display
+    const nextLyricText = useMemo(() => {
+        if (activeBlock) {
+            const currentIndex = timedLyrics.findIndex(l => l.id === activeBlock.id);
+            if (currentIndex !== -1 && currentIndex + 1 < timedLyrics.length) {
+                return timedLyrics[currentIndex + 1].text;
+            }
+            return null;
+        } else {
+            const nextBlock = timedLyrics.find(l => l.startTime! > currentTime);
+            return nextBlock ? nextBlock.text : null;
+        }
+    }, [timedLyrics, activeBlock, currentTime]);
+
+    // Keep refs up to date on every render
+    const activeTextRef = useRef(activeText);
+    const nextTextRef = useRef(nextLyricText);
     const currentTimeRef = useRef(currentTime);
     const durationRef = useRef(duration);
     const isPlayingRef = useRef(isPlaying);
@@ -36,27 +85,161 @@ export const SecondScreen: React.FC = () => {
     const invertBackgroundRef = useRef(invertBackground);
     const videoOpacityRef = useRef(videoOpacity);
     const showLyricsRef = useRef(showLyrics);
+    const isBlackoutRef = useRef(isBlackout);
+    const isInCutRegionRef = useRef(isInCutRegion);
 
-    useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
-    useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
-    useEffect(() => { durationRef.current = duration; }, [duration]);
-    useEffect(() => { lyricsSettingsRef.current = lyricsSettings; }, [lyricsSettings]);
-    useEffect(() => { invertBackgroundRef.current = invertBackground; }, [invertBackground]);
-    useEffect(() => { videoOpacityRef.current = videoOpacity; }, [videoOpacity]);
-    useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-    useEffect(() => { showLyricsRef.current = showLyrics; }, [showLyrics]);
+    activeTextRef.current = activeText;
+    nextTextRef.current = nextLyricText;
+    currentTimeRef.current = currentTime;
+    durationRef.current = duration;
+    isPlayingRef.current = isPlaying;
+    lyricsSettingsRef.current = lyricsSettings;
+    invertBackgroundRef.current = invertBackground;
+    videoOpacityRef.current = videoOpacity;
+    showLyricsRef.current = showLyrics;
+    isBlackoutRef.current = isBlackout;
+    isInCutRegionRef.current = isInCutRegion;
+
+    // Core broadcast synchronization function
+    const broadcastSync = useCallback(() => {
+        const t = currentTimeRef.current;
+        const currentLyric = activeTextRef.current;
+        const nextLyric = nextTextRef.current;
+        const settings = lyricsSettingsRef.current;
+        const invert = invertBackgroundRef.current;
+        const lyricsVisible = showLyricsRef.current;
+        const playing = isPlayingRef.current;
+        const dur = durationRef.current;
+        const blackout = isBlackoutRef.current;
+        const cut = isInCutRegionRef.current;
+
+        // Synchronize Audience Display (presentation)
+        if (channelRef.current) {
+            const videoEl = document.querySelector('video') as HTMLVideoElement | null;
+            
+            let sendTime = t;
+            let sendPlaying = playing;
+            let sendSrc = videoEl?.src || null;
+            let sendOpacity = videoOpacityRef.current;
+
+            if (blackout || cut) {
+                sendTime = 0;
+                sendPlaying = false;
+                sendSrc = null;
+                sendOpacity = 0;
+            } else if (videoEl) {
+                sendTime = videoEl.currentTime;
+                sendPlaying = !videoEl.paused;
+                sendSrc = videoEl.src;
+            }
+
+            channelRef.current.postMessage({
+                type: 'sync',
+                currentTime: sendTime,
+                playing: sendPlaying,
+                src: sendSrc,
+                currentLyric: currentLyric,
+                lyricsSettings: settings,
+                invertBackground: invert,
+                videoOpacity: sendOpacity,
+                showLyrics: lyricsVisible
+            });
+        }
+
+        // Synchronize Stage Display (stage)
+        if (stageChannelRef.current) {
+            stageChannelRef.current.postMessage({
+                type: 'sync',
+                currentLyric: currentLyric,
+                nextLyric: nextLyric,
+                currentTime: t,
+                duration: dur,
+                isPlaying: playing
+            });
+        }
+    }, []);
+
+    // Ensure BroadcastChannels are initialized and listening for "ready" messages
+    useEffect(() => {
+        if (!channelRef.current) {
+            const ch = new BroadcastChannel('second-screen-video');
+            ch.onmessage = (event) => {
+                if (event.data?.type === 'ready') {
+                    broadcastSync();
+                }
+            };
+            channelRef.current = ch;
+        }
+
+        if (!stageChannelRef.current) {
+            const stageCh = new BroadcastChannel('stage-screen');
+            stageCh.onmessage = (event) => {
+                if (event.data?.type === 'ready') {
+                    broadcastSync();
+                }
+            };
+            stageChannelRef.current = stageCh;
+        }
+
+        return () => {
+            channelRef.current?.close();
+            channelRef.current = null;
+            stageChannelRef.current?.close();
+            stageChannelRef.current = null;
+        };
+    }, [broadcastSync]);
+
+    // INSTANT SYNCHRONOUS BROADCAST when active lyric or next lyric changes
+    // useIsomorphicLayoutEffect fires synchronously right after DOM mutations and before paint,
+    // guaranteeing that Audience and Stage receive the new lyric at the exact same frame as Preview!
+    const prevActiveTextRef = useRef<string | null>(null);
+    const prevNextTextRef = useRef<string | null>(null);
+
+    useIsomorphicLayoutEffect(() => {
+        if (prevActiveTextRef.current !== activeText || prevNextTextRef.current !== nextLyricText) {
+            prevActiveTextRef.current = activeText;
+            prevNextTextRef.current = nextLyricText;
+            broadcastSync();
+        }
+    }, [activeText, nextLyricText, broadcastSync]);
+
+    // Instant broadcast when display toggles or settings change
+    useEffect(() => {
+        broadcastSync();
+    }, [showLyrics, invertBackground, videoOpacity, isBlackout, isInCutRegion, lyricsSettings, isPlaying, broadcastSync]);
+
+    // High-frequency periodic sync for video playback drift correction and smooth stage timer countdowns
+    useEffect(() => {
+        if (!isActive && !isStageActive) return;
+
+        const syncInterval = setInterval(() => {
+            broadcastSync();
+        }, 50);
+
+        return () => clearInterval(syncInterval);
+    }, [isActive, isStageActive, broadcastSync]);
+
+    // Check periodically if the popup windows were closed by the user
+    useEffect(() => {
+        if (!secondWindow && !stageWindow) return;
+        const check = setInterval(() => {
+            if (secondWindow && secondWindow.closed) {
+                setSecondWindow(null);
+            }
+            if (stageWindow && stageWindow.closed) {
+                setStageWindow(null);
+            }
+        }, 1000);
+        return () => clearInterval(check);
+    }, [secondWindow, stageWindow]);
 
     const toggleSecondScreen = useCallback(() => {
-        // If active, close the window
         if (secondWindow && !secondWindow.closed) {
             secondWindow.close();
             setSecondWindow(null);
-            channelRef.current?.close();
-            channelRef.current = null;
             return;
         }
 
-        // Open a new window (user drags it to the second monitor)
         const win = window.open(
             '/presentation',
             'secondScreen',
@@ -70,58 +253,21 @@ export const SecondScreen: React.FC = () => {
 
         setSecondWindow(win);
 
-        // Use BroadcastChannel to communicate with the presentation window
-        const channel = new BroadcastChannel('second-screen-video');
-        channelRef.current = channel;
+        // Immediate initial sync
+        setTimeout(() => broadcastSync(), 100);
 
-        channel.onmessage = (event) => {
-            if (event.data.type === 'ready') {
-                const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-                const t = currentTimeRef.current;
-                const mostRecentBlock = lyricsRef.current
-                    .filter(l => l.startTime !== null && l.startTime <= t)
-                    .sort((a, b) => b.startTime! - a.startTime!)[0];
-                    
-                let activeLyricBlock = mostRecentBlock;
-                if (activeLyricBlock && activeLyricBlock.endTime && activeLyricBlock.endTime < t) {
-                    activeLyricBlock = undefined as any;
-                }
-                    
-                const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
-
-                channel.postMessage({
-                    type: 'sync',
-                    src: videoEl?.src || null,
-                    currentTime: videoEl?.currentTime || 0,
-                    playing: videoEl ? !videoEl.paused : false,
-                    currentLyric: activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current,
-                    videoOpacity: videoOpacityRef.current,
-                    showLyrics: showLyricsRef.current
-                });
-            }
-        };
-
-        // Clean up on main window unload
         window.addEventListener('beforeunload', () => {
             win.close();
-            channel.close();
         }, { once: true });
-
-    }, [secondWindow]);
+    }, [secondWindow, broadcastSync]);
 
     const toggleStageScreen = useCallback(() => {
-        // If active, close the window
         if (stageWindow && !stageWindow.closed) {
             stageWindow.close();
             setStageWindow(null);
-            stageChannelRef.current?.close();
-            stageChannelRef.current = null;
             return;
         }
 
-        // Open a new window (user drags it to the stage monitor)
         const win = window.open(
             '/stage',
             'stageScreen',
@@ -135,161 +281,13 @@ export const SecondScreen: React.FC = () => {
 
         setStageWindow(win);
 
-        // Use BroadcastChannel to communicate with the stage window
-        const channel = new BroadcastChannel('stage-screen');
-        stageChannelRef.current = channel;
+        // Immediate initial sync
+        setTimeout(() => broadcastSync(), 100);
 
-        channel.onmessage = (event) => {
-            if (event.data.type === 'ready') {
-                const t = currentTimeRef.current;
-                const timedLyrics = lyricsRef.current
-                    .filter(l => l.startTime !== null)
-                    .sort((a, b) => a.startTime! - b.startTime!);
-
-                const mostRecentBlock = lyricsRef.current
-                    .filter(l => l.startTime !== null && l.startTime <= t)
-                    .sort((a, b) => b.startTime! - a.startTime!)[0];
-                    
-                let activeLyricBlock = mostRecentBlock;
-                if (activeLyricBlock && activeLyricBlock.endTime && activeLyricBlock.endTime < t) {
-                    activeLyricBlock = undefined as any;
-                }
-                    
-                const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
-
-                // Find next slide text
-                let nextLyricText = null;
-                if (activeLyricBlock) {
-                    const currentIndex = timedLyrics.findIndex(l => l.id === activeLyricBlock.id);
-                    if (currentIndex !== -1 && currentIndex + 1 < timedLyrics.length) {
-                        nextLyricText = timedLyrics[currentIndex + 1].text;
-                    }
-                } else {
-                    const nextBlock = timedLyrics.find(l => l.startTime! > t);
-                    if (nextBlock) {
-                        nextLyricText = nextBlock.text;
-                    }
-                }
-
-                channel.postMessage({
-                    type: 'sync',
-                    currentLyric: activeLyricText,
-                    nextLyric: nextLyricText,
-                    currentTime: t,
-                    duration: durationRef.current,
-                    isPlaying: isPlayingRef.current
-                });
-            }
-        };
-
-        // Clean up on main window unload
         window.addEventListener('beforeunload', () => {
             win.close();
-            channel.close();
         }, { once: true });
-
-    }, [stageWindow]);
-
-    // Global interval to constantly sync state to active screens
-    useEffect(() => {
-        if (!isActive && !isStageActive) return;
-
-        const syncInterval = setInterval(() => {
-            const t = currentTimeRef.current;
-            const timedLyrics = lyricsRef.current
-                .filter(l => l.startTime !== null)
-                .sort((a, b) => a.startTime! - b.startTime!);
-
-            const mostRecentBlock = lyricsRef.current
-                .filter(l => l.startTime !== null && l.startTime <= t)
-                .sort((a, b) => b.startTime! - a.startTime!)[0];
-                
-            let activeLyricBlock = mostRecentBlock;
-            if (activeLyricBlock && activeLyricBlock.endTime && activeLyricBlock.endTime < t) {
-                activeLyricBlock = undefined as any;
-            }
-                
-            const activeLyricText = activeLyricBlock ? activeLyricBlock.text : null;
-
-            // Synchronize Audience Display (secondScreen)
-            if (isActive && channelRef.current && !secondWindow?.closed) {
-                const videoEl = document.querySelector('video') as HTMLVideoElement | null;
-                
-                let sendTime = t;
-                let sendPlaying = isPlayingRef.current;
-                let sendSrc = videoEl?.src || null;
-                let sendOpacity = videoOpacityRef.current;
-
-                if (isBlackout || isInCutRegion) {
-                    sendTime = 0;
-                    sendPlaying = false;
-                    sendSrc = null;
-                    sendOpacity = 0;
-                } else if (videoEl) {
-                    sendTime = videoEl.currentTime;
-                    sendPlaying = !videoEl.paused;
-                    sendSrc = videoEl.src;
-                }
-
-                channelRef.current.postMessage({
-                    type: 'sync',
-                    currentTime: sendTime,
-                    playing: sendPlaying,
-                    src: sendSrc,
-                    currentLyric: activeLyricText,
-                    lyricsSettings: lyricsSettingsRef.current,
-                    invertBackground: invertBackgroundRef.current,
-                    videoOpacity: sendOpacity,
-                    showLyrics: showLyricsRef.current
-                });
-            }
-
-            // Synchronize Stage Display (stageScreen)
-            if (isStageActive && stageChannelRef.current && !stageWindow?.closed) {
-                let nextLyricText = null;
-                if (activeLyricBlock) {
-                    const currentIndex = timedLyrics.findIndex(l => l.id === activeLyricBlock.id);
-                    if (currentIndex !== -1 && currentIndex + 1 < timedLyrics.length) {
-                        nextLyricText = timedLyrics[currentIndex + 1].text;
-                    }
-                } else {
-                    const nextBlock = timedLyrics.find(l => l.startTime! > t);
-                    if (nextBlock) {
-                        nextLyricText = nextBlock.text;
-                    }
-                }
-
-                stageChannelRef.current.postMessage({
-                    type: 'sync',
-                    currentLyric: activeLyricText,
-                    nextLyric: nextLyricText,
-                    currentTime: t,
-                    duration: durationRef.current,
-                    isPlaying: isPlayingRef.current
-                });
-            }
-        }, 300);
-
-        return () => clearInterval(syncInterval);
-    }, [isActive, isStageActive, secondWindow, stageWindow, isBlackout, isInCutRegion, showLyrics]);
-
-    // Check periodically if the windows are still open
-    useEffect(() => {
-        if (!secondWindow && !stageWindow) return;
-        const check = setInterval(() => {
-            if (secondWindow && secondWindow.closed) {
-                setSecondWindow(null);
-                channelRef.current?.close();
-                channelRef.current = null;
-            }
-            if (stageWindow && stageWindow.closed) {
-                setStageWindow(null);
-                stageChannelRef.current?.close();
-                stageChannelRef.current = null;
-            }
-        }, 1000);
-        return () => clearInterval(check);
-    }, [secondWindow, stageWindow]);
+    }, [stageWindow, broadcastSync]);
 
     return (
         <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm p-0.5 rounded border border-gray-800 shadow-md">
@@ -384,4 +382,3 @@ export const SecondScreen: React.FC = () => {
         </div>
     );
 };
-
