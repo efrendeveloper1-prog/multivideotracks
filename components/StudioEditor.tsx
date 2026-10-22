@@ -1895,7 +1895,7 @@ const EditorContent: React.FC = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <div className="w-full relative h-full flex-1 z-10 pointer-events-none">
+                                <div className="w-full relative flex-1 min-h-0 z-10 pointer-events-none">
                                     {masterBuffer ? (
                                         <div className="absolute inset-0 z-10">
                                             <WaveformDisplay buffer={masterBuffer} color="#00e5ff" />

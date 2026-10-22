@@ -58,7 +58,7 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
             if (scrollContainer) {
                 scrollLeft = scrollContainer.scrollLeft;
                 drawWidth = scrollContainer.clientWidth;
-                drawHeight = scrollContainer.clientHeight;
+                drawHeight = containerHeight;
 
                 // Position canvas inside the wrapper to match the viewport
                 canvas.style.left = `${scrollLeft}px`;
@@ -67,7 +67,7 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
             } else {
                 canvas.style.left = '0px';
                 canvas.style.width = '100%';
-                canvas.style.height = '100%';
+                canvas.style.height = `${drawHeight}px`;
             }
 
             const dpr = window.devicePixelRatio || 1;
@@ -81,7 +81,8 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
             ctx.lineWidth = 1;
 
             const totalLength = buffer.length;
-            const amp = drawHeight / 2;
+            const centerY = drawHeight / 2;
+            const amp = Math.max(1, (drawHeight - 4) / 2);
 
             // Determine visible range ratios
             const rStart = scrollLeft / containerWidth;
@@ -139,10 +140,15 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
                     max = 0;
                 }
 
-                const yMin = (1 + min) * amp;
-                const yMax = (1 + max) * amp;
-                ctx.moveTo(i, yMin);
-                ctx.lineTo(i, yMax);
+                const yMin = centerY + min * amp;
+                const yMax = centerY + max * amp;
+                if (Math.abs(yMax - yMin) < 1) {
+                    ctx.moveTo(i, centerY - 0.5);
+                    ctx.lineTo(i, centerY + 0.5);
+                } else {
+                    ctx.moveTo(i, yMin);
+                    ctx.lineTo(i, yMax);
+                }
             }
             ctx.stroke();
         };
@@ -152,6 +158,9 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({ buffer, color 
             draw();
         });
         resizeObserver.observe(container);
+        if (scrollContainer) {
+            resizeObserver.observe(scrollContainer);
+        }
 
         if (scrollContainer) {
             scrollContainer.addEventListener('scroll', draw, { passive: true });
